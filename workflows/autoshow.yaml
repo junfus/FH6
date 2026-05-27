@@ -21,17 +21,13 @@ steps:
       key: right
       times: 3
   - press: enter
-  - wait_template:
-      template: design
+  - wait_template: design
   - press: enter
-  - wait_template:
-      template: color
+  - wait_template: color
   - press: enter
-  - wait_template:
-      template: purchase
+  - wait_template: purchase
   - press: enter
-  - wait_template:
-      template: confirm_purchase
+  - wait_template: confirm_purchase
   - press: enter
   - wait_template:
       template: after_purchase
