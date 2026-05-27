@@ -1,0 +1,15 @@
+window_title: "Forza Horizon 6"
+reframe_interval: 1.0
+key_interval: 0.3
+poll_interval: 0.1
+verify_timeout: 10.0
+grid:
+  center_x_c0: 0.2968
+  center_y_r0: 0.3090
+  col_x_step: 0.1730
+  row_y_step: 0.2338
+  slot_half_w: 0.0890
+  slot_half_h: 0.1210
+edge:
+  stddev_threshold: 8
+  width_frac: 0.02

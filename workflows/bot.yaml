@@ -1,0 +1,12 @@
+name: bot
+loop: true
+focus_mode: pause
+await_focus: true
+hold:
+  key: w
+  release_on_lose_focus: true
+steps:
+  - detect:
+      start: enter
+      result: x
+      confirm: enter

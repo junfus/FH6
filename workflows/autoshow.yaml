@@ -1,0 +1,75 @@
+name: bot
+loop: 11
+focus_mode: exit
+await_focus: true
+report_cycle_time: true
+steps:
+  - wait_template: autoshow_menu
+  - press: enter
+  - wait:
+  - press: backspace
+  - wait:
+  - repeat:
+      key: up
+      times: 2
+  - repeat:
+      key: right
+      times: 3
+  - press: enter
+  - wait:
+  - repeat:
+      key: right
+      times: 3
+  - press: enter
+  - wait_template:
+      template: design
+  - press: enter
+  - wait_template:
+      template: color
+  - press: enter
+  - wait_template:
+      template: purchase
+  - press: enter
+  - wait_template:
+      template: confirm_purchase
+  - press: enter
+  - wait_template:
+      template: after_purchase
+      timeout: 20.0
+  - press: escape
+  - wait:
+  - press: right
+  - wait:
+  - press: down
+  - press: enter
+  - wait:
+  - repeat:
+      key: down
+      times: 7
+  - press: enter
+  - wait:
+  # mastery sequence
+  - press: enter
+  - wait: 1.5
+  - press: right
+  - press: enter
+  - wait: 1.5
+  - press: up
+  - press: enter
+  - wait: 1.5
+  - press: up
+  - press: enter
+  - wait: 1.5
+  - press: up
+  - press: enter
+  - wait: 1.5
+  - press: left
+  - press: enter
+  - wait: 1.5
+  - press: escape
+  - wait:
+  - press: escape
+  - wait:
+  - press: left
+  - wait:
+  - press: up
