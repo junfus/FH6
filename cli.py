@@ -22,7 +22,6 @@ import cv2
 import mss
 import pydirectinput
 
-
 # =============================================================================
 # Config
 # =============================================================================
@@ -317,7 +316,9 @@ def capture_frame(wait=None):
             return bgr
         except Exception as e:
             last_err = e
-            log_warning(f"Capture attempt {att + 1}/{CAPTURE_RETRIES} failed: {last_err}")
+            log_warning(
+                f"Capture attempt {att + 1}/{CAPTURE_RETRIES} failed: {last_err}"
+            )
             time.sleep(POLL_INTERVAL)
 
     raise RuntimeError(f"capture failed after {CAPTURE_RETRIES} attempts: {last_err}")
@@ -464,7 +465,9 @@ def dump_save_cells(cells, tag):
         for r in range(3):
             cell = cells[c][r]
             cv2.imwrite(str(_dump_dir / f"{tag}_c{c}r{r}_slot.png"), cell["bgr"])
-            cv2.imwrite(str(_dump_dir / f"{tag}_c{c}r{r}_brand_new.png"), cell["yellow_bgr"])
+            cv2.imwrite(
+                str(_dump_dir / f"{tag}_c{c}r{r}_brand_new.png"), cell["yellow_bgr"]
+            )
 
 
 def dump_diagnostics(frame, tag):
@@ -507,10 +510,10 @@ def get_focus_edge_hits(frame, x0, y0, x1, y1):
     upper = np.array([75, 255, 255])
 
     lines = [
-        frame[y0:y0 + probe_len, cx:cx + 1],
-        frame[y1 - probe_len:y1, cx:cx + 1],
-        frame[cy:cy + 1, x0:x0 + probe_len],
-        frame[cy:cy + 1, x1 - probe_len:x1],
+        frame[y0 : y0 + probe_len, cx : cx + 1],
+        frame[y1 - probe_len : y1, cx : cx + 1],
+        frame[cy : cy + 1, x0 : x0 + probe_len],
+        frame[cy : cy + 1, x1 - probe_len : x1],
     ]
 
     hits = []
@@ -543,7 +546,7 @@ def get_grid_cells(frame):
             x0, y0, x1, y1 = get_scaled_slot(h, w, col, row)
             bgr = frame[y0:y1, x0:x1].copy()
             gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-            yellow_bgr = frame[y0 + y_lo:y0 + y_hi, x0 + x_lo:x0 + x_hi].copy()
+            yellow_bgr = frame[y0 + y_lo : y0 + y_hi, x0 + x_lo : x0 + x_hi].copy()
 
             cells[col][row] = {
                 "bgr": bgr,
@@ -554,7 +557,9 @@ def get_grid_cells(frame):
             hits = get_focus_edge_hits(frame, x0, y0, x1, y1)
             is_foc = is_slot_focused(hits)
             foc_tag = " <- FOCUS" if is_foc else ""
-            log_debug(f"slot c{col}r{row} slot={x1 - x0}x{y1 - y0} hits={','.join(str(h) for h in hits)}{foc_tag}")
+            log_debug(
+                f"slot c{col}r{row} slot={x1 - x0}x{y1 - y0} hits={','.join(str(h) for h in hits)}{foc_tag}"
+            )
 
             if is_foc and focused is None:
                 focused = (col, row)
@@ -573,7 +578,9 @@ def is_brand_new(cell):
 
 
 def is_delete_marker(cell, frame_w):
-    return get_match_score(cell["gray"], "delete_marker", frame_w) > get_threshold("delete_marker")
+    return get_match_score(cell["gray"], "delete_marker", frame_w) > get_threshold(
+        "delete_marker"
+    )
 
 
 def slice_grid(frame):
@@ -586,7 +593,9 @@ def slice_grid(frame):
             for row in range(3):
                 s = get_scaled_slot(h, w, col, row)
                 hits = get_focus_edge_hits(frame, *s)
-                log_warning(f"  c{col}r{row} hits={','.join(str(h) for h in hits)} (focused={is_slot_focused(hits)})")
+                log_warning(
+                    f"  c{col}r{row} hits={','.join(str(h) for h in hits)} (focused={is_slot_focused(hits)})"
+                )
 
         dump_ensure_dir()
         p = dump_get_dir() / f"no_focus_{int(time.time())}.png"
@@ -624,11 +633,13 @@ def is_edge_empty(gray, side):
     if side == "left":
         strip = gray[ey0:ey1, 0:ew]
     else:
-        strip = gray[ey0:ey1, w - ew:w]
+        strip = gray[ey0:ey1, w - ew : w]
 
     mean, stddev = cv2.meanStdDev(strip)
     empty = stddev[0][0] < EDGE_STDDEV_THRESHOLD
-    log_debug(f"is_edge_empty: side={side} stddev={stddev[0][0]:.1f} threshold={EDGE_STDDEV_THRESHOLD} empty={empty}")
+    log_debug(
+        f"is_edge_empty: side={side} stddev={stddev[0][0]:.1f} threshold={EDGE_STDDEV_THRESHOLD} empty={empty}"
+    )
     return empty
 
 
@@ -694,7 +705,9 @@ def scroll_left_to_target():
     while True:
         frame = capture_frame()
         target_cols, is_first, _ = analyze_frame(frame)
-        log_debug(f"left scan: targets={len(target_cols)} first_page={is_first} lefts={lefts}")
+        log_debug(
+            f"left scan: targets={len(target_cols)} first_page={is_first} lefts={lefts}"
+        )
 
         if len(target_cols) > 0:
             col = get_target_column(target_cols[0])
@@ -728,9 +741,11 @@ def scroll_right_to_target():
             col = get_target_column(target_cols[0])
             if col > 0:
                 key_repeat("right", col)
+                log_info("target at c0")
+                return {"frame": None}
 
             log_info("target at c0")
-            return True
+            return {"frame": frame}
 
         if is_last:
             log_info("last page, no target found")
@@ -790,7 +805,7 @@ def purge_duplicates():
             log_info(f"No more targets; done ({deletions} deletions)")
             return
 
-        frame = capture_frame()
+        frame = result["frame"] if result["frame"] is not None else capture_frame()
         slices = slice_grid(frame)
         if dump_is_enabled():
             dump_save_cells(slices["cells"], f"iter{iter_idx}")
@@ -799,7 +814,9 @@ def purge_duplicates():
         scan = _purge_candidate(slices["cells"], fw, False)
 
         if scan["target"] is None:
-            if is_edge_empty(cv2.cvtColor(slices["frame"], cv2.COLOR_BGR2GRAY), "right"):
+            if is_edge_empty(
+                cv2.cvtColor(slices["frame"], cv2.COLOR_BGR2GRAY), "right"
+            ):
                 log_info(f"Last page, no more candidates; done ({deletions} deletions)")
                 return
 
@@ -819,6 +836,7 @@ def purge_duplicates():
         key_press("enter")
         wait_for_refresh()
         deletions += 1
+        log_info(f"deleted ({deletions})")
         iter_idx += 1
 
 
@@ -1026,7 +1044,9 @@ def main():
     parser = argparse.ArgumentParser(description="Forza Horizon 6 automation CLI")
     parser.add_argument("action", help="Workflow name or path to YAML file")
     parser.add_argument("-d", "--dump", action="store_true", help="Save debug frames")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logs")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable debug logs"
+    )
     args = parser.parse_args()
 
     action = args.action

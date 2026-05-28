@@ -763,18 +763,22 @@ function Scroll-RightToTarget {
     while ($true) {
         $frame = Capture-Frame
         $r = Analyze-Frame $frame
-        $frame.Dispose()
         Log-Debug "right scan: targets=$($r.TargetCols.Count) last_page=$($r.IsLast)"
 
         if ($r.TargetCols.Count -gt 0) {
             $col = Get-TargetColumn $r.TargetCols[0]
             if ($col -gt 0) {
+                $frame.Dispose()
                 Repeat-Key 'right' $col
+                Log-Info 'target at c0'
+                return @{ Frame = $null }
             }
 
             Log-Info 'target at c0'
-            return 0
+            return @{ Frame = $frame }
         }
+
+        $frame.Dispose()
 
         if ($r.IsLast) {
             Log-Info 'last page, no target found'
@@ -846,10 +850,16 @@ function Purge-Duplicates {
         $result = Scroll-RightToTarget
         if ($null -eq $result) {
             Log-Info "No more targets; done ($deletions deletions)"
-            return $deletions
+            return
         }
 
-        $frame = Capture-Frame
+        if ($result.Frame) {
+            $frame = $result.Frame
+        }
+        else {
+            $frame = Capture-Frame
+        }
+        
         $slices = Slice-Grid $frame
         if ($script:_dumpToDisk) { Save-DumpCells $slices.Cells "iter$iterIdx" }
         $scan = Purge-Candidate $slices.Cells $slices.Frame.Cols $false
@@ -864,7 +874,7 @@ function Purge-Duplicates {
 
             if ($isLast) {
                 Log-Info "Last page, no more candidates; done ($deletions deletions)"
-                return $deletions
+                return
             }
 
             Log-Info 'no candidate this view; right 4'
@@ -876,6 +886,7 @@ function Purge-Duplicates {
         Move-Cursor $slices.Focused $scan.Target
         Purge-Sequence
         $deletions++
+        Log-Info "deleted ($deletions)"
         $iterIdx++
         Dispose-GridCells $slices.Cells
         $slices.Frame.Dispose()

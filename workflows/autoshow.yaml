@@ -1,5 +1,5 @@
 name: bot
-loop: 11
+loop: 1
 focus_mode: exit
 await_focus: true
 report_cycle_time: true

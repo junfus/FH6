@@ -5,6 +5,7 @@ await_focus: true
 steps:
   - wait_template: my_car_menu
   - press: "y"
+  - wait: 0.5
   - repeat:
       key: down
       times: 2
