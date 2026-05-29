@@ -182,7 +182,6 @@ $SENDKEYS_MAP = @{
     w         = 'w'
 }
 
-$DIAGNOSTIC_CHECKPOINTS = @(0.8)
 $CAPTURE_RETRIES = 5
 $DUMP_DIR_ROOT = $PSScriptRoot
 
@@ -1044,14 +1043,15 @@ function Invoke-Workflow($workflow) {
         $loopVal = $false
     }
 
-    if ($loopVal -is [bool] -or $loopVal.ToString() -eq 'True') {
+    $lv = $loopVal.ToString()
+    if ($lv -eq 'True') {
         $maxCycles = -1
     }
-    elseif ($loopVal.ToString() -eq 'False') {
+    elseif ($lv -eq 'False') {
         $maxCycles = 1
     }
     else {
-        $maxCycles = [int]$loopVal.ToString()
+        $maxCycles = [int]$lv
     }
 
     if ($maxCycles -eq 0) { $maxCycles = 1 }

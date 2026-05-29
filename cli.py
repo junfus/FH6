@@ -834,7 +834,6 @@ def purge_duplicates():
         wait_for_refresh()
         key_press("down")
         key_press("enter")
-        wait_for_refresh()
         deletions += 1
         log_info(f"deleted ({deletions})")
         iter_idx += 1
@@ -928,8 +927,6 @@ def run_step(step):
         if result is None:
             log_info("No targets found; stopping")
             sys.exit(0)
-
-        wait_for_refresh()
 
     elif name == "purge_duplicates":
         purge_duplicates()
