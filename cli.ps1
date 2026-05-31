@@ -520,7 +520,7 @@ function Format-TemplateDetails($details) {
         } else {
             $state = 'miss' 
         }
-        $parts += ('{0}={1:F3}:{2}' -f $d.Name, $d.Score, $state)
+        $parts += ('{0}:{1}({2:F3})' -f $d.Name, $state, $d.Score)
     }
     return $parts -join ', '
 }
@@ -552,7 +552,7 @@ function Wait-ForTemplate($templateExpr, [double]$timeout = $script:VERIFY_TIMEO
 
         if ($r.Matched) {
             $el = ([DateTime]::Now - $start).TotalSeconds
-            Log-Info "$label verified ($(Format-TemplateDetails $r.Details), took $([Math]::Round($el,1))s)"
+            Log-Info "$(Format-TemplateDetails $r.Details), took $([Math]::Round($el,1))s"
             $gray.Dispose()
             $frame.Dispose()
             return
@@ -1152,12 +1152,12 @@ function Invoke-Detect([hashtable]$screenMap) {
         if ($null -eq $script:_lastDetectMatchAt) {
             $timing = 'first match'
         } else {
-            $timing = 'since last match {0:F1}s' -f ($now - $script:_lastDetectMatchAt).TotalSeconds
+            $timing = 'since last {0:F1}s' -f ($now - $script:_lastDetectMatchAt).TotalSeconds
         }
         $script:_lastDetectMatchAt = $now
 
         $key = $screenMap[$matched]
-        Log-Info "screen=$matched verified ($(Format-TemplateDetails $matchDetails), $timing) -> press $key"
+        Log-Info "$(Format-TemplateDetails $matchDetails), $timing -> press $key"
         Press-Key $key
     }
 }

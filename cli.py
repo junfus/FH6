@@ -448,7 +448,7 @@ def eval_template_expr(gray, expr, debug=False, frame_w=0):
 
 def format_template_details(details):
     return ", ".join(
-        f"{d['name']}={d['score']:.3f}:{'hit' if d['matched'] else 'miss'}"
+        f"{d['name']}:{'hit' if d['matched'] else 'miss'}({d['score']:.3f})"
         for d in details
     )
 
@@ -478,9 +478,7 @@ def wait_on_template(template_expr, timeout=None, on_miss_key=None):
 
         if r["matched"]:
             elapsed = time.time() - start
-            log_info(
-                f"{label} verified ({format_template_details(r['details'])}, took {elapsed:.1f}s)"
-            )
+            log_info(f"{format_template_details(r['details'])}, took {elapsed:.1f}s")
             return
 
         wait_poll_tick()
@@ -1010,13 +1008,11 @@ def invoke_detect(screen_map):
         if _last_detect_match_time is None:
             timing = "first match"
         else:
-            timing = f"since last match {now - _last_detect_match_time:.1f}s"
+            timing = f"since last {now - _last_detect_match_time:.1f}s"
         _last_detect_match_time = now
 
         key = screen_map[matched]
-        log_info(
-            f"screen={matched} verified ({format_template_details(match_details)}, {timing}) -> press {key}"
-        )
+        log_info(f"{format_template_details(match_details)}, {timing} -> press {key}")
         key_press(key)
 
 
