@@ -36,8 +36,7 @@ Write-Host "Source image: ${srcW}x${srcH}"
 
 if ([Math]::Abs($scale - 1.0) -lt 0.001) {
     $scaledBmp = $srcBmp
-}
-else {
+} else {
     $newW = [Math]::Max(1, [int][Math]::Round($srcW * $scale))
     $newH = [Math]::Max(1, [int][Math]::Round($srcH * $scale))
     Write-Host "Scaling to ${newW}x${newH}"
@@ -58,16 +57,14 @@ Write-Host "Saved: t_$File.png ($([Math]::Round((Get-Item $outPath).Length / 102
 $yamlPath = Join-Path $PSScriptRoot 'thresholds.yaml'
 if (Test-Path $yamlPath) {
     $content = Get-Content $yamlPath -Raw
-}
-else {
+} else {
     $content = ''
 }
 $entry = "$File`: $($Threshold.ToString('F2'))"
 
 if ($content -match "(?m)^$File`:") {
     Write-Host "Threshold for '$File' already exists in thresholds.yaml, skipping"
-}
-else {
+} else {
     $trimmed = $content.TrimEnd()
     Set-Content -Path $yamlPath -Value "$trimmed`n$entry`n" -NoNewline
     Write-Host "Added '$entry' to thresholds.yaml"

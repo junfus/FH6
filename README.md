@@ -50,16 +50,88 @@ python cli.py bot -d -v
 
 Create a YAML file in `workflows/` or any path. See `workflows/bot.yaml` for a minimal example, `workflows/autoshow.yaml` for a full cycle.
 
+```powershell
+# by name -- resolves to workflows/bot.yaml
+python cli.py bot
+
+# by path -- any YAML file
+python cli.py C:\Users\me\my_custom.yaml
+```
+
 ### Steps
 
-| Step                            | Description                                                                                                          |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `press: enter`                  | Send a single key                                                                                                    |
-| `repeat: {key: down, times: 4}` | Send a key N times                                                                                                   |
-| `wait:`                         | Sleep `reframe_interval`. Explicit: `wait: 2.0`                                                                      |
-| `countdown: 3`                  | Visible countdown before proceeding (default 3s)                                                                     |
-| `wait_template: home_menu`      | Poll screen until a template matches. Supports `timeout` and `on_miss` (key to press each cycle if not matched)      |
-| `scroll_to_target:`             | Scroll the car grid to find the first target badge column. Checks left edge for first page, right edge for last page |
-| `purge_duplicates:`             | Scroll right through target columns, slice 4x3 grid, find rated non-new duplicates, delete them                      |
-| `snap:`                         | Capture frame + slice 12 grid cells to dump folder                                                                   |
-| `detect: {start: enter, ...}`   | Match screen against templates, press the mapped key on hit. For state-machine loops like wheelspin                  |
+| Step                                                                 | Description                                                                                         |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `press: enter`                                                       | Send a single key                                                                                   |
+| `repeat: {key: down, times: 4}`                                      | Send a key N times                                                                                  |
+| `wait:`                                                              | Sleep `reframe_interval`. Explicit: `wait: 2.0`                                                     |
+| `countdown: 3`                                                       | Visible countdown before proceeding (default 3s)                                                    |
+| `wait_on: {template: home_menu}`                                     | Poll screen until a template condition succeeds                                                     |
+| `scroll_to: target`                                                  | Scroll the car grid to the first matching template column                                           |
+| `purge: {template: target, marker: delete_marker, brand_new: false}` | Delete matching cars                                                                                |
+| `snap:`                                                              | Capture frame + slice 12 grid cells to dump folder                                                  |
+| `detect: {start: enter, ...}`                                        | Match screen against templates, press the mapped key on hit. For state-machine loops like wheelspin |
+
+### Action arguments
+
+| Action      | Required                                               | Optional             |
+| ----------- | ------------------------------------------------------ | -------------------- |
+| `press`     | key name as value                                      | none                 |
+| `repeat`    | `key`, `times`                                         | none                 |
+| `wait`      | none                                                   | seconds as value     |
+| `countdown` | none                                                   | seconds as value     |
+| `wait_on`   | `template`                                             | `timeout`, `on_miss` |
+| `scroll_to` | single template name as value                          | none                 |
+| `purge`     | `template`, `brand_new` (`true`, `false`, or `bypass`) | `marker`             |
+| `snap`      | none                                                   | none                 |
+| `detect`    | one or more `template: key` mappings                   | none                 |
+
+`wait_on.template` accepts a single template name or an explicit boolean expression. `scroll_to`, `purge.template`, and `purge.marker` accept single template names only.
+
+For template expressions, lists are only valid under `all` or `any`; bare `template: [a, b]` is intentionally invalid.
+
+```yaml
+- press: enter
+
+- repeat:
+    key: down
+    times: 4
+
+- wait:
+- wait: 2.0
+
+- countdown: 3
+```
+
+```yaml
+- wait_on:
+    template: a
+- wait_on:
+    template:
+      any: [a, b]
+- wait_on:
+    template:
+      all:
+        - a
+        - any: [b, c]
+```
+
+```yaml
+- scroll_to: target
+
+- purge:
+    template: target
+    marker: delete_marker
+    brand_new: false
+
+- purge:
+    template: target
+    brand_new: bypass
+
+- snap:
+
+- detect:
+    start: enter
+    result: x
+    confirm: enter
+```

@@ -1,9 +1,9 @@
-name: purge
 loop: false
 focus_mode: exit
 await_focus: true
 steps:
-  - wait_template: my_car_menu
+  - wait_on:
+      template: my_car_menu
   - press: "y"
   - wait: 0.5
   - repeat:
@@ -12,5 +12,8 @@ steps:
   - press: enter
   - press: escape
   # Find and purge
-  - scroll_to_target:
-  - purge_duplicates:
+  - scroll_to: target
+  - purge:
+      template: target
+      marker: delete_marker
+      brand_new: false

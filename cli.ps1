@@ -165,6 +165,12 @@ $script:_dumpDir = $null
 $script:_dumpToDisk = $false
 $script:_logFile = $null
 $script:_logLevel = 'INFO'
+$script:_lastDetectMatchAt = $null
+
+$script:YELLOW_LOWER = [OpenCvSharp.Scalar]::new(20, 200, 200)
+$script:YELLOW_UPPER = [OpenCvSharp.Scalar]::new(32, 255, 255)
+$script:FOCUS_LOWER = [OpenCvSharp.Scalar]::new(35, 150, 150)
+$script:FOCUS_UPPER = [OpenCvSharp.Scalar]::new(75, 255, 255)
 
 $SENDKEYS_MAP = @{
     enter     = '{ENTER}'
@@ -191,22 +197,36 @@ $DUMP_DIR_ROOT = $PSScriptRoot
 $script:_currentStep = $null
 
 function Write-Log([string]$Level, [string]$Msg) {
-    if ($Level -eq 'DEBUG' -and $script:_logLevel -ne 'DEBUG') { return }
+    if ($Level -eq 'DEBUG' -and $script:_logLevel -ne 'DEBUG') {
+        return 
+    }
     if ($script:_currentStep) {
         $prefix = "[$($script:_currentStep)] "
-    }
-    else {
+    } else {
         $prefix = ''
     }
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $($Level.PadRight(7)) $prefix$Msg"
     Write-Host $line
-    if ($script:_logFile) { Add-Content -Path $script:_logFile -Value $line -Encoding UTF8 }
+    if ($script:_logFile) {
+        Add-Content -Path $script:_logFile -Value $line -Encoding UTF8 
+    }
 }
 
-function Log-Info([string]$m) { Write-Log 'INFO' $m }
-function Log-Debug([string]$m) { Write-Log 'DEBUG' $m }
-function Log-Warning([string]$m) { Write-Log 'WARNING' $m }
-function Log-Error([string]$m) { Write-Log 'ERROR' $m }
+function Log-Info([string]$m) {
+    Write-Log 'INFO' $m 
+}
+function Log-Debug([string]$m) {
+    Write-Log 'DEBUG' $m 
+}
+function Log-Warning([string]$m) {
+    Write-Log 'WARNING' $m 
+}
+function Log-Error([string]$m) {
+    Write-Log 'ERROR' $m 
+}
+function Is-DebugEnabled {
+    return $script:_logLevel -eq 'DEBUG' 
+}
 
 # ============================================================================
 # Window helpers
@@ -214,7 +234,9 @@ function Log-Error([string]$m) { Write-Log 'ERROR' $m }
 function Get-GameWindow {
     if ($script:_hwnd -eq [IntPtr]::Zero) {
         $proc = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($script:WINDOW_TITLE) } | Select-Object -First 1
-        if ($proc) { $script:_hwnd = $proc.MainWindowHandle }
+        if ($proc) {
+            $script:_hwnd = $proc.MainWindowHandle 
+        }
     }
 
     return $script:_hwnd
@@ -223,10 +245,13 @@ function Get-GameWindow {
 function Is-WindowFocused {
     try {
         $fg = [ForzaWin32]::GetForegroundWindow()
-        if ($fg -eq [IntPtr]::Zero) { return $false }
+        if ($fg -eq [IntPtr]::Zero) {
+            return $false 
+        }
         return ([ForzaWin32]::GetTitle($fg)).Contains($script:WINDOW_TITLE)
+    } catch {
+        return $false 
     }
-    catch { return $false }
 }
 
 # ============================================================================
@@ -248,7 +273,9 @@ function Wait-Countdown([double]$seconds, [string]$label = 'Starting') {
     }
 
     $tail = $seconds - $full
-    if ($tail -gt 0) { Start-Sleep -Milliseconds ([int]($tail * 1000)) }
+    if ($tail -gt 0) {
+        Start-Sleep -Milliseconds ([int]($tail * 1000)) 
+    }
 }
 
 # ============================================================================
@@ -256,7 +283,9 @@ function Wait-Countdown([double]$seconds, [string]$label = 'Starting') {
 # ============================================================================
 function Press-Key([string]$Key) {
     Log-Debug "press $Key"
-    $sk = $SENDKEYS_MAP[$Key]; if (-not $sk) { $sk = $Key }
+    $sk = $SENDKEYS_MAP[$Key]; if (-not $sk) {
+        $sk = $Key 
+    }
     [System.Windows.Forms.SendKeys]::SendWait($sk)
     Start-Sleep -Milliseconds ([int]($script:KEY_INTERVAL * 1000))
 }
@@ -285,7 +314,10 @@ function Is-KeyHeld([string]$Key) {
 # ============================================================================
 function Ensure-DpiAware {
     if (-not $script:_dpiAwareSet) {
-        try { [ForzaWin32]::SetProcessDPIAware() | Out-Null } catch {}
+        try {
+            [ForzaWin32]::SetProcessDPIAware() | Out-Null 
+        } catch {
+        }
         $script:_dpiAwareSet = $true
     }
 }
@@ -332,8 +364,7 @@ function Capture-Frame([double]$wait = $script:REFRAME_INTERVAL) {
             [OpenCvSharp.Cv2]::CvtColor($mat, $bgr, [OpenCvSharp.ColorConversionCodes]::BGRA2BGR)
             $mat.Dispose()
             return $bgr
-        }
-        catch {
+        } catch {
             $lastErr = $_
             Log-Warning "Capture attempt $($att+1)/$CAPTURE_RETRIES failed: $lastErr"
             Wait-PollTick
@@ -391,8 +422,7 @@ function Get-ScaledTemplate([string]$name, [int]$frameW) {
     $nw = [Math]::Max(1, [int][Math]::Round($tmpl.Cols * $scale))
     if ($scale -lt 1.0) {
         $interp = [OpenCvSharp.InterpolationFlags]::Area
-    }
-    else {
+    } else {
         $interp = [OpenCvSharp.InterpolationFlags]::Linear
     }
     $resized = [OpenCvSharp.Mat]::new()
@@ -402,9 +432,13 @@ function Get-ScaledTemplate([string]$name, [int]$frameW) {
 }
 
 function Get-MatchScore([OpenCvSharp.Mat]$regionGray, [string]$name, [int]$frameW = 0) {
-    if ($frameW -eq 0) { $frameW = $regionGray.Cols }
+    if ($frameW -eq 0) {
+        $frameW = $regionGray.Cols 
+    }
     $tmpl = Get-ScaledTemplate $name $frameW
-    if ($tmpl.Rows -gt $regionGray.Rows -or $tmpl.Cols -gt $regionGray.Cols) { return 0.0 }
+    if ($tmpl.Rows -gt $regionGray.Rows -or $tmpl.Cols -gt $regionGray.Cols) {
+        return 0.0 
+    }
     $res = [OpenCvSharp.Mat]::new()
     [OpenCvSharp.Cv2]::MatchTemplate($regionGray, $tmpl, $res, [OpenCvSharp.TemplateMatchModes]::CCoeffNormed)
     $mn = 0.0; $mx = 0.0
@@ -419,19 +453,106 @@ function Match-Template([OpenCvSharp.Mat]$gray, [string]$name, [int]$frameW = 0)
     return @{ Score = $score; Matched = ($score -gt (Get-Threshold $name)) }
 }
 
-function Wait-ForTemplate([string]$name, [double]$timeout = $script:VERIFY_TIMEOUT, [string]$onMiss = $null) {
+function Format-TemplateExpression($expr) {
+    if ($expr -is [string]) {
+        return $expr 
+    }
+
+    $keys = @($expr.Keys)
+    $op = $keys[0].ToString()
+    $items = @($expr[$op])
+
+    $parts = @()
+    foreach ($item in $items) {
+        $parts += (Format-TemplateExpression $item)
+    }
+    if ($op -eq 'all') {
+        $joiner = ' and ' 
+    } else {
+        $joiner = ' or ' 
+    }
+    return '(' + ($parts -join $joiner) + ')'
+}
+
+function Match-TemplateExpression([OpenCvSharp.Mat]$gray, $expr, [bool]$debug = $false, [int]$frameW = 0) {
+    if ($expr -is [string]) {
+        $r = Match-Template $gray $expr $frameW
+        return [pscustomobject]@{
+            Matched = [bool]$r.Matched
+            Details = @([pscustomobject]@{
+                    Name    = $expr
+                    Score   = [double]$r.Score
+                    Matched = [bool]$r.Matched
+                })
+        }
+    }
+
+    $keys = @($expr.Keys)
+    $op = $keys[0].ToString()
+    $items = @($expr[$op])
+
+    $details = @()
+    $matched = ($op -eq 'all')
+    foreach ($item in $items) {
+        $r = Match-TemplateExpression $gray $item -debug $debug -frameW $frameW
+        $details += $r.Details
+        if ($op -eq 'all') {
+            $matched = $matched -and [bool]$r.Matched
+            if (-not $matched -and -not $debug) {
+                break 
+            }
+        } else {
+            $matched = $matched -or [bool]$r.Matched
+            if ($matched -and -not $debug) {
+                break 
+            }
+        }
+    }
+
+    return [pscustomobject]@{ Matched = [bool]$matched; Details = $details }
+}
+
+function Format-TemplateDetails($details) {
+    $parts = @()
+    foreach ($d in $details) {
+        if ($d.Matched) {
+            $state = 'hit' 
+        } else {
+            $state = 'miss' 
+        }
+        $parts += ('{0}={1:F3}:{2}' -f $d.Name, $d.Score, $state)
+    }
+    return $parts -join ', '
+}
+
+function Get-TemplateTag([string]$label) {
+    $tag = ($label -replace '[^A-Za-z0-9_-]+', '_').Trim('_')
+    if ($tag.Length -gt 80) {
+        $tag = $tag.Substring(0, 80) 
+    }
+    if ($tag.Length -eq 0) {
+        return 'match' 
+    }
+    return $tag
+}
+
+function Wait-ForTemplate($templateExpr, [double]$timeout = $script:VERIFY_TIMEOUT, [string]$onMiss = $null) {
+    $label = Format-TemplateExpression $templateExpr
     $start = [DateTime]::Now
 
     while (([DateTime]::Now - $start).TotalSeconds -lt $timeout) {
         $frame = Capture-Frame -wait 0
         $gray = [OpenCvSharp.Mat]::new()
         [OpenCvSharp.Cv2]::CvtColor($frame, $gray, [OpenCvSharp.ColorConversionCodes]::BGR2GRAY)
-        $r = Match-Template $gray $name
-        Log-Debug "polling ${name}: score=$([Math]::Round($r.Score,3)) matched=$($r.Matched)"
+        $debug = Is-DebugEnabled
+        $r = Match-TemplateExpression $gray $templateExpr -debug $debug
+        if ($debug) {
+            Log-Debug "polling ${label}: $(Format-TemplateDetails $r.Details) matched=$($r.Matched)"
+        }
 
         if ($r.Matched) {
             $el = ([DateTime]::Now - $start).TotalSeconds
-            Log-Info "$name verified (score=$([Math]::Round($r.Score,3)), took $([Math]::Round($el,1))s)"
+            Log-Info "$label verified ($(Format-TemplateDetails $r.Details), took $([Math]::Round($el,1))s)"
             $gray.Dispose()
             $frame.Dispose()
             return
@@ -448,9 +569,9 @@ function Wait-ForTemplate([string]$name, [double]$timeout = $script:VERIFY_TIMEO
     }
 
     $frame = Capture-Frame -wait 0
-    Write-Diagnostics $frame "${name}_timeout"
+    Write-Diagnostics $frame "$(Get-TemplateTag $label)_timeout"
     $frame.Dispose()
-    Log-Error "Did not detect $name within $([int]$timeout)s; stopping"
+    Log-Error "Did not detect $label within $([int]$timeout)s; stopping"
     exit 1
 }
 
@@ -467,7 +588,9 @@ function Ensure-DumpDir {
 }
 
 function Save-DumpCells($cells, [string]$tag) {
-    if (-not $script:_dumpToDisk) { return }
+    if (-not $script:_dumpToDisk) {
+        return 
+    }
     Ensure-DumpDir
     for ($c = 0; $c -lt 4; $c++) {
         for ($r = 0; $r -lt 3; $r++) {
@@ -492,11 +615,10 @@ function Write-Diagnostics([OpenCvSharp.Mat]$frame, [string]$tag) {
         $th = [double]$kv.Value
         if ($sc -gt $th) {
             $mark = ' ABOVE'
-        }
-        else {
+        } else {
             $mark = ''
         }
-        Log-Warning ("  {0,-16} = {1:F3} (th={2:F2}){3}" -f $n, $sc, $th, $mark)
+        Log-Warning ('  {0,-16} = {1:F3} (th={2:F2}){3}' -f $n, $sc, $th, $mark)
     }
 
     $g.Dispose()
@@ -505,7 +627,12 @@ function Write-Diagnostics([OpenCvSharp.Mat]$frame, [string]$tag) {
 function Dispose-GridCells($cells) {
     for ($c = 0; $c -lt 4; $c++) {
         for ($r = 0; $r -lt 3; $r++) {
-            $cells[$c][$r].Gray.Dispose()
+            $cell = $cells[$c][$r]
+            foreach ($name in @('Bgr', 'Gray', 'YellowBgr')) {
+                if ($cell.$name) {
+                    $cell.$name.Dispose() 
+                }
+            }
         }
     }
 }
@@ -523,8 +650,6 @@ function Get-ScaledSlot([int]$h, [int]$w, [int]$col, [int]$row) {
 function Get-FocusEdgeHits([OpenCvSharp.Mat]$frame, [int]$x0, [int]$y0, [int]$x1, [int]$y1) {
     $cx = [int](($x0 + $x1) / 2); $cy = [int](($y0 + $y1) / 2)
     $probeLen = [Math]::Max(2, [int]([Math]::Max($x1 - $x0, $y1 - $y0) * 0.06))
-    $lower = [OpenCvSharp.Scalar]::new(35, 150, 150)
-    $upper = [OpenCvSharp.Scalar]::new(75, 255, 255)
     $lines = @(
         $frame.SubMat($y0, $y0 + $probeLen, $cx, $cx + 1)
         $frame.SubMat($y1 - $probeLen, $y1, $cx, $cx + 1)
@@ -536,9 +661,11 @@ function Get-FocusEdgeHits([OpenCvSharp.Mat]$frame, [int]$x0, [int]$y0, [int]$x1
         $hsv = [OpenCvSharp.Mat]::new()
         [OpenCvSharp.Cv2]::CvtColor($lines[$i], $hsv, [OpenCvSharp.ColorConversionCodes]::BGR2HSV)
         $mask = [OpenCvSharp.Mat]::new()
-        [OpenCvSharp.Cv2]::InRange($hsv, $lower, $upper, $mask)
+        [OpenCvSharp.Cv2]::InRange($hsv, $script:FOCUS_LOWER, $script:FOCUS_UPPER, $mask)
         $hits[$i] = [OpenCvSharp.Cv2]::CountNonZero($mask)
-        $hsv.Dispose(); $mask.Dispose()
+        $hsv.Dispose()
+        $mask.Dispose()
+        $lines[$i].Dispose()
     }
 
     return $hits
@@ -574,8 +701,12 @@ function Get-GridCells([OpenCvSharp.Mat]$frame) {
             $colArr[$row] = [PSCustomObject]@{ Bgr = $bgr; Gray = $gray; YellowBgr = $yBgr }
             $hits = Get-FocusEdgeHits $frame $x0 $y0 $x1 $y1
             $isFoc = Is-Focused $hits
-            Log-Debug "slot c${col}r${row} slot=$($x1-$x0)x$($y1-$y0) hits=$($hits -join ',')$(if($isFoc){' <- FOCUS'})"
-            if ($isFoc -and $null -eq $focused) { $focused = @($col, $row) }
+            if (Is-DebugEnabled) {
+                Log-Debug "slot c${col}r${row} slot=$($x1-$x0)x$($y1-$y0) hits=$($hits -join ',')$(if($isFoc){' <- FOCUS'})"
+            }
+            if ($isFoc -and $null -eq $focused) {
+                $focused = @($col, $row) 
+            }
         }
 
         $cells[$col] = $colArr
@@ -584,23 +715,15 @@ function Get-GridCells([OpenCvSharp.Mat]$frame) {
     return [PSCustomObject]@{ Cells = $cells; Focused = $focused }
 }
 
-function Is-Target([PSCustomObject]$cell, [int]$fw) {
-    return (Get-MatchScore $cell.Gray 'target' $fw) -gt (Get-Threshold 'target')
-}
-
 function Is-BrandNew([PSCustomObject]$cell) {
     $hsv = [OpenCvSharp.Mat]::new()
     [OpenCvSharp.Cv2]::CvtColor($cell.YellowBgr, $hsv, [OpenCvSharp.ColorConversionCodes]::BGR2HSV)
     $mask = [OpenCvSharp.Mat]::new()
-    [OpenCvSharp.Cv2]::InRange($hsv, [OpenCvSharp.Scalar]::new(20, 200, 200),
-        [OpenCvSharp.Scalar]::new(32, 255, 255), $mask)
+    [OpenCvSharp.Cv2]::InRange($hsv, $script:YELLOW_LOWER, $script:YELLOW_UPPER, $mask)
     $cnt = [OpenCvSharp.Cv2]::CountNonZero($mask)
-    $hsv.Dispose(); $mask.Dispose()
+    $hsv.Dispose()
+    $mask.Dispose()
     return $cnt -gt 0
-}
-
-function Is-DeleteMarker([PSCustomObject]$cell, [int]$fw) {
-    return (Get-MatchScore $cell.Gray 'delete_marker' $fw) -gt (Get-Threshold 'delete_marker')
 }
 
 function Slice-Grid([OpenCvSharp.Mat]$frame) {
@@ -624,7 +747,11 @@ function Slice-Grid([OpenCvSharp.Mat]$frame) {
         exit 1
     }
 
-    return [PSCustomObject]@{ Frame = $frame; Cells = $grid.Cells; Focused = $grid.Focused }
+    return [PSCustomObject]@{
+        Frame   = $frame
+        Cells   = $grid.Cells
+        Focused = $grid.Focused
+    }
 }
 
 # ============================================================================
@@ -632,9 +759,17 @@ function Slice-Grid([OpenCvSharp.Mat]$frame) {
 # ============================================================================
 function Move-Cursor($from, $to) {
     $dr = [int]$to[1] - [int]$from[1]
-    Repeat-Key $(if ($dr -gt 0) { 'down' } else { 'up' }) ([Math]::Abs($dr))
+    Repeat-Key $(if ($dr -gt 0) {
+            'down' 
+        } else {
+            'up' 
+        }) ([Math]::Abs($dr))
     $dc = [int]$to[0] - [int]$from[0]
-    Repeat-Key $(if ($dc -gt 0) { 'right' } else { 'left' }) ([Math]::Abs($dc))
+    Repeat-Key $(if ($dc -gt 0) {
+            'right' 
+        } else {
+            'left' 
+        }) ([Math]::Abs($dc))
 }
 
 function Is-EdgeEmpty([OpenCvSharp.Mat]$gray, [string]$side) {
@@ -644,23 +779,24 @@ function Is-EdgeEmpty([OpenCvSharp.Mat]$gray, [string]$side) {
     $ew = [int]($w * $script:EDGE_WIDTH_FRAC)
     if ($side -eq 'left') {
         $strip = $gray.SubMat($ey0, $ey1, 0, $ew)
-    }
-    else {
+    } else {
         $strip = $gray.SubMat($ey0, $ey1, $w - $ew, $w)
     }
 
     $mean = [OpenCvSharp.Scalar]::new(0); $stddev = [OpenCvSharp.Scalar]::new(0)
     [OpenCvSharp.Cv2]::MeanStdDev($strip, [ref]$mean, [ref]$stddev)
     $empty = $stddev.Val0 -lt $script:EDGE_STDDEV_THRESHOLD
-    Log-Debug "Is-EdgeEmpty: side=$side stddev=$([Math]::Round($stddev.Val0, 1)) threshold=$($script:EDGE_STDDEV_THRESHOLD) empty=$empty"
+    if (Is-DebugEnabled) {
+        Log-Debug "Is-EdgeEmpty: side=$side stddev=$([Math]::Round($stddev.Val0, 1)) threshold=$($script:EDGE_STDDEV_THRESHOLD) empty=$empty"
+    }
+    $strip.Dispose()
     return $empty
 }
 
-function Find-TargetColumns([OpenCvSharp.Mat]$gray) {
+function Find-TemplateColumns([OpenCvSharp.Mat]$gray, [string]$template) {
     $w = $gray.Cols; $h = $gray.Rows
-    $tmpl = Get-ScaledTemplate 'target' $w
+    $tmpl = Get-ScaledTemplate $template $w
     $tw = $tmpl.Cols
-    # Crop to grid area to avoid false matches in header/footer/left panel
     $cropX = [int](($script:CENTER_X_C0 - $script:SLOT_HALF_W) * $w)
     $cropY = [int](($script:CENTER_Y_R0 - $script:SLOT_HALF_H) * $h)
     $cropR = [int](0.95 * $w)
@@ -669,84 +805,94 @@ function Find-TargetColumns([OpenCvSharp.Mat]$gray) {
     $res = [OpenCvSharp.Mat]::new()
     [OpenCvSharp.Cv2]::MatchTemplate($roi, $tmpl, $res, [OpenCvSharp.TemplateMatchModes]::CCoeffNormed)
     $mask = [OpenCvSharp.Mat]::new()
-    [void][OpenCvSharp.Cv2]::Threshold($res, $mask, (Get-Threshold 'target'), 1.0, [OpenCvSharp.ThresholdTypes]::Binary)
+    [void][OpenCvSharp.Cv2]::Threshold($res, $mask, (Get-Threshold $template), 1.0, [OpenCvSharp.ThresholdTypes]::Binary)
     $mask8 = [OpenCvSharp.Mat]::new()
     $mask.ConvertTo($mask8, [OpenCvSharp.MatType]::CV_8UC1, 255)
     $locs = [OpenCvSharp.Mat]::new()
     [OpenCvSharp.Cv2]::FindNonZero($mask8, $locs)
-    $hits = @()
+    $rawHits = [System.Collections.Generic.List[double]]::new()
     if ($locs.Empty()) {
         $count = 0
-    }
-    else {
+    } else {
         $count = $locs.Rows
     }
-    # FindNonZero returns Nx1 CV_32SC2 -- each row is (x,y) as two int32s
+
     for ($i = 0; $i -lt $count; $i++) {
-        $offset = $i * 8  # 2 x int32 = 8 bytes per point
+        $offset = $i * 8
         $px = [System.Runtime.InteropServices.Marshal]::ReadInt32($locs.Data, $offset)
         $cx = ($px + $tw / 2.0 + $cropX) / $w
-        $merged = $false
-        foreach ($h in $hits) {
-            if ([Math]::Abs($cx - $h) -lt ($tw / [double]$w)) {
-                $merged = $true
-                break
-            }
-        }
-
-        if (-not $merged) { $hits += $cx }
+        $rawHits.Add([double]$cx)
     }
 
+    $roi.Dispose()
     $res.Dispose()
     $mask.Dispose()
     $mask8.Dispose()
     $locs.Dispose()
-    $sorted = @($hits | Sort-Object)
-    Log-Debug "Find-TargetColumns: frame=${w}x$($gray.Rows) tmpl=${tw}x$($tmpl.Rows) raw_count=$count merged=$($sorted.Count) xfracs=[$($sorted.ForEach({ '{0:F4}' -f $_ }) -join ', ')]"
+
+    $mergeWidth = $tw / [double]$w
+    $hits = [System.Collections.Generic.List[double]]::new()
+    foreach ($cx in @($rawHits | Sort-Object)) {
+        if ($hits.Count -eq 0 -or [Math]::Abs($cx - $hits[$hits.Count - 1]) -ge $mergeWidth) {
+            $hits.Add([double]$cx)
+        }
+    }
+
+    $sorted = @($hits)
+    if (Is-DebugEnabled) {
+        Log-Debug "Find-TemplateColumns: template=$template frame=${w}x$h tmpl=${tw}x$($tmpl.Rows) raw_count=$count merged=$($sorted.Count) xfracs=[$($sorted.ForEach({ '{0:F4}' -f $_ }) -join ', ')]"
+    }
     return $sorted
 }
 
-function Get-TargetColumn([double]$xFrac) {
+function Get-TemplateColumn([double]$xFrac) {
     return [int][Math]::Round(($xFrac - $script:CENTER_X_C0) / $script:COL_X_STEP)
 }
 
-function Analyze-Frame([OpenCvSharp.Mat]$frame) {
+function Analyze-Frame([OpenCvSharp.Mat]$frame, [string]$template, [string]$edgeSide = $null) {
     $gray = [OpenCvSharp.Mat]::new()
     [OpenCvSharp.Cv2]::CvtColor($frame, $gray, [OpenCvSharp.ColorConversionCodes]::BGR2GRAY)
-    $targetCols = Find-TargetColumns $gray
-    $isFirst = Is-EdgeEmpty $gray 'left'
-    $isLast = Is-EdgeEmpty $gray 'right'
+    $templateCols = Find-TemplateColumns $gray $template
+    if ($null -eq $edgeSide -or $edgeSide -eq 'left') {
+        $isFirst = Is-EdgeEmpty $gray 'left' 
+    } else {
+        $isFirst = $null 
+    } 
+    if ($null -eq $edgeSide -or $edgeSide -eq 'right') {
+        $isLast = Is-EdgeEmpty $gray 'right' 
+    } else {
+        $isLast = $null 
+    }
     $gray.Dispose()
-    return [PSCustomObject]@{ TargetCols = $targetCols; IsFirst = $isFirst; IsLast = $isLast }
+    return [PSCustomObject]@{ TemplateCols = $templateCols; IsFirst = $isFirst; IsLast = $isLast }
 }
 
-function Scroll-LeftToTarget {
+function Scroll-LeftTo([string]$template) {
     Log-Info 'scanning left'
     $lefts = 0
 
     while ($true) {
         $frame = Capture-Frame
-        $r = Analyze-Frame $frame
+        $r = Analyze-Frame $frame $template 'left'
         $frame.Dispose()
-        Log-Debug "left scan: targets=$($r.TargetCols.Count) first_page=$($r.IsFirst) lefts=$lefts"
+        Log-Debug "left scan: matches=$($r.TemplateCols.Count) first_page=$($r.IsFirst) lefts=$lefts"
 
-        if ($r.TargetCols.Count -gt 0) {
-            $col = Get-TargetColumn $r.TargetCols[0]
+        if ($r.TemplateCols.Count -gt 0) {
+            $col = Get-TemplateColumn $r.TemplateCols[0]
 
             if ($col -gt 0) {
-                Log-Info "target at c$col, right $col"
+                Log-Info "match at c$col, right $col"
                 Repeat-Key 'right' $col
                 return 0
             }
 
             if ($r.IsFirst) {
-                Log-Info 'target at c0, first page'
+                Log-Info 'match at c0, first page'
                 return 0
             }
-        }
-        else {
+        } else {
             if ($r.IsFirst) {
-                Log-Info "first page, no target (lefts=$lefts)"
+                Log-Info "first page, no match (lefts=$lefts)"
                 return $lefts
             }
         }
@@ -756,31 +902,31 @@ function Scroll-LeftToTarget {
     }
 }
 
-function Scroll-RightToTarget {
+function Scroll-RightTo([string]$template) {
     Log-Info 'scanning right'
 
     while ($true) {
         $frame = Capture-Frame
-        $r = Analyze-Frame $frame
-        Log-Debug "right scan: targets=$($r.TargetCols.Count) last_page=$($r.IsLast)"
+        $r = Analyze-Frame $frame $template 'right'
+        Log-Debug "right scan: matches=$($r.TemplateCols.Count) last_page=$($r.IsLast)"
 
-        if ($r.TargetCols.Count -gt 0) {
-            $col = Get-TargetColumn $r.TargetCols[0]
+        if ($r.TemplateCols.Count -gt 0) {
+            $col = Get-TemplateColumn $r.TemplateCols[0]
             if ($col -gt 0) {
                 $frame.Dispose()
                 Repeat-Key 'right' $col
-                Log-Info 'target at c0'
+                Log-Info 'match at c0'
                 return @{ Frame = $null }
             }
 
-            Log-Info 'target at c0'
+            Log-Info 'match at c0'
             return @{ Frame = $frame }
         }
 
         $frame.Dispose()
 
         if ($r.IsLast) {
-            Log-Info 'last page, no target found'
+            Log-Info 'last page, no match found'
             return $null
         }
 
@@ -788,8 +934,9 @@ function Scroll-RightToTarget {
     }
 }
 
-function Scroll-ToTarget {
-    $lefts = Scroll-LeftToTarget
+function Scroll-To([string]$template) {
+    Log-Info "scroll_to template=$template"
+    $lefts = Scroll-LeftTo $template
 
     if ($lefts -eq 0) {
         return 0
@@ -797,42 +944,90 @@ function Scroll-ToTarget {
 
     Log-Info "right $lefts to return"
     Repeat-Key 'right' $lefts
-    return Scroll-RightToTarget
+    return Scroll-RightTo $template
 }
 
 # ============================================================================
 # Purge
 # ============================================================================
-function Purge-Candidate($cells, [int]$fw, [bool]$sawTarget) {
-    $target = $null
-    $scanDone = $false
+function Is-BrandNewAllowed([bool]$isNew, $brandNewFilter) {
+    return $null -eq $brandNewFilter -or $isNew -eq [bool]$brandNewFilter
+}
+
+function Find-PurgeCandidate($cells, [int]$frameW, [string]$template, $marker, $brandNewFilter, $focused) {
+    $candidate = $null
+    $focusedIsCandidate = $false
+    $debug = Is-DebugEnabled
     for ($c = 0; $c -lt 4; $c++) {
-        if ($scanDone) { break }
         for ($r = 0; $r -lt 3; $r++) {
             $cell = $cells[$c][$r]
-            $isTarget = Is-Target $cell $fw
-            $new = Is-BrandNew $cell
-            $rated = Is-DeleteMarker $cell $fw
-            Log-Debug "slot c${c}r${r} target=$isTarget new=$new rated=$rated"
-            if ($isTarget) {
-                $sawTarget = $true
-                if ($null -eq $target -and -not $new -and $rated) { $target = @($c, $r) }
-            }
-            elseif ($sawTarget) {
-                $scanDone = $true
-                break
+            $match = Match-Template $cell.Gray $template $frameW
+            $markerResult = $null
+            $new = $null
+            if ($match.Matched) {
+                if ($null -eq $marker) {
+                    $markerMatches = $true
+                } else {
+                    $markerResult = Match-Template $cell.Gray $marker $frameW
+                    $markerMatches = $markerResult.Matched
+                }
+                if ($null -eq $brandNewFilter) {
+                    $brandNewMatches = $true
+                } else {
+                    $new = Is-BrandNew $cell
+                    $brandNewMatches = Is-BrandNewAllowed $new $brandNewFilter
+                }
+                $isCandidate = $markerMatches -and $brandNewMatches
+
+                if ($debug) {
+                    if ($null -eq $new) {
+                        $newLabel = 'n/a' 
+                    } else {
+                        $newLabel = $new.ToString() 
+                    }
+                    if ($null -eq $markerResult) {
+                        $markerLabel = 'n/a'
+                    } else {
+                        $markerLabel = Format-TemplateDetails @([pscustomobject]@{
+                                Name    = $marker
+                                Score   = [double]$markerResult.Score
+                                Matched = [bool]$markerResult.Matched
+                            })
+                    }
+                    $templateLabel = Format-TemplateDetails @([pscustomobject]@{
+                            Name    = $template
+                            Score   = [double]$match.Score
+                            Matched = [bool]$match.Matched
+                        })
+                    Log-Debug "slot c${c}r${r} template=$templateLabel marker=$markerLabel brand_new=$newLabel candidate=$isCandidate"
+                }
+
+                if ($isCandidate) {
+                    if ($focused -and [int]$focused[0] -eq $c -and [int]$focused[1] -eq $r) {
+                        $candidate = @($c, $r)
+                        $focusedIsCandidate = $true
+                    } elseif ($null -eq $candidate) {
+                        $candidate = @($c, $r)
+                    }
+                }
+            } elseif ($debug) {
+                $templateLabel = Format-TemplateDetails @([pscustomobject]@{
+                        Name    = $template
+                        Score   = [double]$match.Score
+                        Matched = [bool]$match.Matched
+                    })
+                Log-Debug "slot c${c}r${r} template=$templateLabel marker=n/a brand_new=n/a candidate=False"
             }
         }
     }
 
     return [PSCustomObject]@{
-        Target    = $target
-        ScanDone  = $scanDone
-        SawTarget = $sawTarget
+        Candidate          = $candidate
+        FocusedIsCandidate = $focusedIsCandidate
     }
 }
 
-function Purge-Sequence {
+function Invoke-PurgeSequence {
     Press-Key 'enter'
     Wait-ForRefresh
     Repeat-Key 'down' 4
@@ -842,28 +1037,30 @@ function Purge-Sequence {
     Press-Key 'enter'
 }
 
-function Purge-Duplicates {
+function Invoke-Purge([string]$template, $marker = $null, $brandNewFilter = $null) {
     $deletions = 0
     $iterIdx = 0
+    Log-Info "purge template=$template marker=$(Format-Marker $marker) brand_new=$(Format-BrandNew $brandNewFilter)"
     while ($true) {
-        $result = Scroll-RightToTarget
+        $result = Scroll-RightTo $template
         if ($null -eq $result) {
-            Log-Info "No more targets; done ($deletions deletions)"
+            Log-Info "No more matches; done ($deletions deletions)"
             return
         }
 
         if ($result.Frame) {
             $frame = $result.Frame
-        }
-        else {
+        } else {
             $frame = Capture-Frame
         }
         
         $slices = Slice-Grid $frame
-        if ($script:_dumpToDisk) { Save-DumpCells $slices.Cells "iter$iterIdx" }
-        $scan = Purge-Candidate $slices.Cells $slices.Frame.Cols $false
+        if ($script:_dumpToDisk) {
+            Save-DumpCells $slices.Cells "iter$iterIdx" 
+        }
+        $scan = Find-PurgeCandidate $slices.Cells $slices.Frame.Cols $template $marker $brandNewFilter $slices.Focused
 
-        if ($null -eq $scan.Target) {
+        if ($null -eq $scan.Candidate) {
             $gray = [OpenCvSharp.Mat]::new()
             [OpenCvSharp.Cv2]::CvtColor($slices.Frame, $gray, [OpenCvSharp.ColorConversionCodes]::BGR2GRAY)
             $isLast = Is-EdgeEmpty $gray 'right'
@@ -881,9 +1078,13 @@ function Purge-Duplicates {
             continue
         }
 
-        Log-Info "candidate at c$($scan.Target[0])r$($scan.Target[1])"
-        Move-Cursor $slices.Focused $scan.Target
-        Purge-Sequence
+        if ($scan.FocusedIsCandidate) {
+            Log-Info "focused candidate at c$($scan.Candidate[0])r$($scan.Candidate[1])"
+        } else {
+            Log-Info "candidate at c$($scan.Candidate[0])r$($scan.Candidate[1])"
+            Move-Cursor $slices.Focused $scan.Candidate
+        }
+        Invoke-PurgeSequence
         $deletions++
         Log-Info "deleted ($deletions)"
         $iterIdx++
@@ -919,8 +1120,7 @@ function Invoke-Snap {
 function Invoke-Detect([hashtable]$screenMap) {
     try {
         $frame = Capture-Frame -wait $script:POLL_INTERVAL
-    }
-    catch {
+    } catch {
         Log-Error "$_ -- pausing 1s and retrying"
         Start-Sleep -Seconds 1
         return
@@ -930,12 +1130,16 @@ function Invoke-Detect([hashtable]$screenMap) {
     [OpenCvSharp.Cv2]::CvtColor($frame, $g, [OpenCvSharp.ColorConversionCodes]::BGR2GRAY)
 
     $matched = $null
-    $matchScore = 0.0
+    $matchDetails = $null
     foreach ($n in $screenMap.Keys) {
         $r = Match-Template $g $n
         if ($r.Matched) {
             $matched = $n
-            $matchScore = $r.Score
+            $matchDetails = @([pscustomobject]@{
+                    Name    = $n
+                    Score   = [double]$r.Score
+                    Matched = $true
+                })
             break
         }
     }
@@ -944,10 +1148,344 @@ function Invoke-Detect([hashtable]$screenMap) {
     $frame.Dispose()
 
     if ($matched) {
+        $now = [DateTime]::Now
+        if ($null -eq $script:_lastDetectMatchAt) {
+            $timing = 'first match'
+        } else {
+            $timing = 'since last match {0:F1}s' -f ($now - $script:_lastDetectMatchAt).TotalSeconds
+        }
+        $script:_lastDetectMatchAt = $now
+
         $key = $screenMap[$matched]
-        Log-Info "screen=$matched score=$matchScore -> press $key"
+        Log-Info "screen=$matched verified ($(Format-TemplateDetails $matchDetails), $timing) -> press $key"
         Press-Key $key
     }
+}
+
+# ============================================================================
+# Workflow validation
+# ============================================================================
+function Read-TemplateExpression([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [System.Collections.IDictionary])) {
+        Log-Error "$actionName requires a mapping with template"
+        exit 1
+    }
+
+    if ($actionValue.ContainsKey('match')) {
+        Log-Error "$actionName uses template, not match"
+        exit 1
+    }
+
+    if (-not $actionValue.ContainsKey('template')) {
+        Log-Error "$actionName requires template"
+        exit 1
+    }
+
+    Validate-TemplateExpression $actionName $actionValue['template']
+    return $actionValue['template']
+}
+
+function Read-Template([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [string])) {
+        Log-Error "$actionName requires a single template name"
+        exit 1
+    }
+
+    return $actionValue.ToString()
+}
+
+function Read-MappingTemplate([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [System.Collections.IDictionary])) {
+        Log-Error "$actionName requires a mapping with template"
+        exit 1
+    }
+
+    if ($actionValue.ContainsKey('match')) {
+        Log-Error "$actionName uses template, not match"
+        exit 1
+    }
+
+    if (-not $actionValue.ContainsKey('template')) {
+        Log-Error "$actionName requires template"
+        exit 1
+    }
+
+    if (-not ($actionValue['template'] -is [string])) {
+        Log-Error "$actionName template must be a single template name"
+        exit 1
+    }
+
+    return $actionValue['template'].ToString()
+}
+
+function Read-Marker([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [System.Collections.IDictionary]) -or -not $actionValue.ContainsKey('marker') -or $null -eq $actionValue['marker']) {
+        return $null
+    }
+
+    if (-not ($actionValue['marker'] -is [string])) {
+        Log-Error "$actionName marker must be a single template name"
+        exit 1
+    }
+
+    return $actionValue['marker'].ToString()
+}
+
+function Read-BrandNew([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [System.Collections.IDictionary]) -or -not $actionValue.ContainsKey('brand_new') -or $null -eq $actionValue['brand_new']) {
+        Log-Error "$actionName requires brand_new: true, false, or bypass"
+        exit 1
+    }
+
+    $brandNew = $actionValue['brand_new']
+    if ($brandNew -is [bool]) {
+        return [bool]$brandNew
+    }
+
+    if ($brandNew.ToString() -eq 'True') {
+        return $true
+    }
+
+    if ($brandNew.ToString() -eq 'False') {
+        return $false
+    }
+
+    if ($brandNew -is [string] -and $brandNew.ToLowerInvariant() -eq 'bypass') {
+        return $null
+    }
+
+    Log-Error "$actionName brand_new must be true, false, or bypass"
+    exit 1
+}
+
+function Format-BrandNew($brandNewFilter) {
+    if ($null -eq $brandNewFilter) {
+        return 'bypass' 
+    }
+    return $brandNewFilter.ToString().ToLowerInvariant()
+}
+
+function Format-Marker($marker) {
+    if ($marker) {
+        return $marker 
+    }
+    return 'bypass'
+}
+
+function Validate-TemplateExpression([string]$actionName, $expr) {
+    if ($expr -is [string]) {
+        if ($expr -eq '') {
+            Log-Error "$actionName template must not be empty"
+            exit 1
+        }
+        return
+    }
+
+    if ($expr -is [System.Collections.IList]) {
+        Log-Error "$actionName template lists must be under all or any"
+        exit 1
+    }
+
+    if (-not ($expr -is [System.Collections.IDictionary])) {
+        Log-Error "$actionName template must be a template name or an all/any expression"
+        exit 1
+    }
+
+    $keys = @($expr.Keys)
+    if ($keys.Count -ne 1 -or ($keys[0].ToString() -ne 'all' -and $keys[0].ToString() -ne 'any')) {
+        Log-Error "$actionName template expression must contain exactly one key: all or any"
+        exit 1
+    }
+
+    $op = $keys[0].ToString()
+    $items = @($expr[$op])
+    if ($items.Count -eq 0 -or $expr[$op] -is [string]) {
+        Log-Error "$actionName template $op expression must be a non-empty list"
+        exit 1
+    }
+
+    foreach ($item in $items) {
+        Validate-TemplateExpression $actionName $item
+    }
+}
+
+function Validate-Number([string]$actionName, $value, [string]$field = 'value', [bool]$integer = $false, [bool]$allowEmpty = $false) {
+    if ($null -eq $value -or $value.ToString() -eq '') {
+        if ($allowEmpty) {
+            return 
+        }
+        Log-Error "$actionName requires $field"
+        exit 1
+    }
+
+    try {
+        if ($integer) {
+            $parsed = [int]$value
+        } else {
+            $parsed = [double]$value
+        }
+    } catch {
+        if ($integer) {
+            $kind = 'integer' 
+        } else {
+            $kind = 'number' 
+        }
+        Log-Error "$actionName $field must be a $kind"
+        exit 1
+    }
+
+    if ($parsed -lt 0) {
+        Log-Error "$actionName $field must be >= 0"
+        exit 1
+    }
+}
+
+function Read-Repeat([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [System.Collections.IDictionary])) {
+        Log-Error "$actionName requires key and times"
+        exit 1
+    }
+
+    if (-not $actionValue.ContainsKey('key') -or $null -eq $actionValue['key'] -or $actionValue['key'].ToString() -eq '') {
+        Log-Error "$actionName requires key"
+        exit 1
+    }
+
+    if (-not $actionValue.ContainsKey('times') -or $null -eq $actionValue['times']) {
+        Log-Error "$actionName requires times"
+        exit 1
+    }
+
+    try {
+        $times = [int]$actionValue['times']
+    } catch {
+        Log-Error "$actionName times must be an integer"
+        exit 1
+    }
+
+    if ($times -lt 0) {
+        Log-Error "$actionName times must be >= 0"
+        exit 1
+    }
+
+    return [pscustomobject]@{
+        Key   = $actionValue['key'].ToString()
+        Times = $times
+    }
+}
+
+function Validate-Step($step, [int]$index) {
+    if (-not ($step -is [System.Collections.IDictionary]) -or @($step.Keys).Count -ne 1) {
+        Log-Error "step $index must be a single action mapping"
+        exit 1
+    }
+
+    $actionName = ($step.Keys | Select-Object -First 1).ToString()
+    $actionValue = $step[$actionName]
+
+    switch ($actionName) {
+        'press' {
+            if ($null -eq $actionValue -or $actionValue.ToString() -eq '') {
+                Log-Error "step $index press requires a key"
+                exit 1
+            }
+        }
+        'wait' {
+            Validate-Number $actionName $actionValue -allowEmpty $true
+        }
+        'repeat' {
+            [void](Read-Repeat $actionName $actionValue)
+        }
+        'countdown' {
+            Validate-Number $actionName $actionValue -integer $true -allowEmpty $true
+        }
+        'wait_on' {
+            [void](Read-TemplateExpression $actionName $actionValue)
+            if ($actionValue.ContainsKey('timeout') -and $null -ne $actionValue['timeout']) {
+                Validate-Number $actionName $actionValue['timeout'] -field 'timeout'
+            }
+            if ($actionValue.ContainsKey('on_miss') -and ($null -eq $actionValue['on_miss'] -or $actionValue['on_miss'].ToString() -eq '')) {
+                Log-Error 'wait_on on_miss must be a key'
+                exit 1
+            }
+        }
+        'scroll_to' {
+            [void](Read-Template $actionName $actionValue)
+        }
+        'purge' {
+            [void](Read-MappingTemplate $actionName $actionValue)
+            [void](Read-Marker $actionName $actionValue)
+            [void](Read-BrandNew $actionName $actionValue)
+        }
+        'snap' {
+            if ($null -ne $actionValue -and $actionValue.ToString() -ne '') {
+                Log-Error 'snap does not accept arguments'
+                exit 1
+            }
+        }
+        'detect' {
+            if (-not ($actionValue -is [System.Collections.IDictionary]) -or @($actionValue.Keys).Count -eq 0) {
+                Log-Error 'detect requires one or more template-to-key mappings'
+                exit 1
+            }
+            foreach ($kv in $actionValue.GetEnumerator()) {
+                if ($null -eq $kv.Key -or $kv.Key.ToString() -eq '' -or $null -eq $kv.Value -or $kv.Value.ToString() -eq '') {
+                    Log-Error 'detect mappings must be template: key'
+                    exit 1
+                }
+            }
+        }
+        default {
+            Log-Error "Unknown action: $actionName"
+            exit 1
+        }
+    }
+}
+
+function Validate-Workflow($workflow) {
+    if (-not ($workflow -is [System.Collections.IDictionary])) {
+        Log-Error 'workflow must be a mapping'
+        exit 1
+    }
+
+    if (-not $workflow.ContainsKey('steps') -or -not ($workflow['steps'] -is [System.Collections.IList]) -or $workflow['steps'].Count -eq 0) {
+        Log-Error 'workflow requires non-empty steps'
+        exit 1
+    }
+
+    if ($workflow.ContainsKey('loop') -and $workflow['loop'].ToString() -ne 'True' -and $workflow['loop'].ToString() -ne 'False') {
+        Validate-Number 'workflow' $workflow['loop'] -field 'loop' -integer $true
+    }
+
+    if ($workflow.ContainsKey('focus_mode') -and $workflow['focus_mode'].ToString() -ne 'exit' -and $workflow['focus_mode'].ToString() -ne 'pause') {
+        Log-Error 'workflow focus_mode must be exit or pause'
+        exit 1
+    }
+
+    foreach ($field in @('await_focus', 'report_cycle_time')) {
+        if ($workflow.ContainsKey($field) -and $workflow[$field].ToString() -ne 'True' -and $workflow[$field].ToString() -ne 'False') {
+            Log-Error "workflow $field must be true or false"
+            exit 1
+        }
+    }
+
+    if ($workflow.ContainsKey('hold')) {
+        $hold = $workflow['hold']
+        if (-not ($hold -is [System.Collections.IDictionary]) -or -not $hold.ContainsKey('key') -or $null -eq $hold['key'] -or $hold['key'].ToString() -eq '') {
+            Log-Error 'workflow hold requires key'
+            exit 1
+        }
+        if ($hold.ContainsKey('release_on_lose_focus') -and $hold['release_on_lose_focus'].ToString() -ne 'True' -and $hold['release_on_lose_focus'].ToString() -ne 'False') {
+            Log-Error 'workflow hold release_on_lose_focus must be true or false'
+            exit 1
+        }
+    }
+
+    for ($i = 0; $i -lt $workflow['steps'].Count; $i++) {
+        Validate-Step $workflow['steps'][$i] ($i + 1)
+    }
+
+    Log-Info 'Validated workflow'
 }
 
 # ============================================================================
@@ -965,8 +1503,7 @@ function Invoke-Step($step) {
         'wait' {
             if ($null -eq $actionValue -or $actionValue.ToString() -eq '') {
                 Wait-ForRefresh
-            }
-            else {
+            } else {
                 Wait-ForRefresh ([double]$actionValue)
             }
         }
@@ -976,41 +1513,49 @@ function Invoke-Step($step) {
         'countdown' {
             if ($null -eq $actionValue -or $actionValue.ToString() -eq '') {
                 Wait-Countdown 3 'Waiting'
-            }
-            else {
+            } else {
                 Wait-Countdown ([int]$actionValue) 'Waiting'
             }
         }
-        'wait_template' {
-            if ($actionValue -is [string]) {
-                Wait-ForTemplate $actionValue
+        'wait_on' {
+            $templateExpr = $actionValue['template']
+            if ($actionValue['timeout']) {
+                $tout = [double]$actionValue['timeout']
+            } else {
+                $tout = $script:VERIFY_TIMEOUT
             }
-            else {
-                $tmpl = $actionValue['template'].ToString()
-                if ($actionValue['timeout']) {
-                    $tout = [double]$actionValue['timeout']
-                }
-                else {
-                    $tout = $script:VERIFY_TIMEOUT
-                }
-                $onMiss = $actionValue['on_miss']
-                if ($onMiss) {
-                    Wait-ForTemplate $tmpl -timeout $tout -onMiss $onMiss.ToString()
-                }
-                else {
-                    Wait-ForTemplate $tmpl -timeout $tout
-                }
+            $onMiss = $actionValue['on_miss']
+            if ($onMiss) {
+                Wait-ForTemplate $templateExpr -timeout $tout -onMiss $onMiss.ToString()
+            } else {
+                Wait-ForTemplate $templateExpr -timeout $tout
             }
         }
-        'scroll_to_target' {
-            $result = Scroll-ToTarget
+        'scroll_to' {
+            $result = Scroll-To $actionValue.ToString()
             if ($null -eq $result) {
-                Log-Info 'No targets found; stopping'
+                Log-Info 'No matches found; stopping'
                 exit 0
             }
         }
-        'purge_duplicates' {
-            Purge-Duplicates
+        'purge' {
+            $brandNew = $actionValue['brand_new']
+            if ($brandNew.ToString() -eq 'True') {
+                $brandNewFilter = $true
+            } elseif ($brandNew.ToString() -eq 'False') {
+                $brandNewFilter = $false
+            } else {
+                $brandNewFilter = $null
+            }
+            if ($actionValue.ContainsKey('marker') -and $null -ne $actionValue['marker']) {
+                $marker = $actionValue['marker'].ToString()
+            } else {
+                $marker = $null
+            }
+            Invoke-Purge `
+                $actionValue['template'].ToString() `
+                $marker `
+                $brandNewFilter
         }
         'snap' {
             Invoke-Snap
@@ -1023,10 +1568,6 @@ function Invoke-Step($step) {
 
             Invoke-Detect $screenMap
         }
-        default {
-            Log-Error "Unknown action: $actionName"
-            exit 1
-        }
     }
 
     $script:_currentStep = $null
@@ -1038,28 +1579,26 @@ function Invoke-Step($step) {
 function Invoke-Workflow($workflow) {
     if ($workflow.ContainsKey('loop')) {
         $loopVal = $workflow['loop']
-    }
-    else {
+    } else {
         $loopVal = $false
     }
 
     $lv = $loopVal.ToString()
     if ($lv -eq 'True') {
         $maxCycles = -1
-    }
-    elseif ($lv -eq 'False') {
+    } elseif ($lv -eq 'False') {
         $maxCycles = 1
-    }
-    else {
+    } else {
         $maxCycles = [int]$lv
     }
 
-    if ($maxCycles -eq 0) { $maxCycles = 1 }
+    if ($maxCycles -eq 0) {
+        $maxCycles = 1 
+    }
 
     if ($workflow.ContainsKey('focus_mode')) {
         $focusMode = $workflow['focus_mode'].ToString()
-    }
-    else {
+    } else {
         $focusMode = 'exit'
     }
 
@@ -1070,8 +1609,7 @@ function Invoke-Workflow($workflow) {
         $k = $h['key'].ToString().ToUpper()
         if ($h.ContainsKey('release_on_lose_focus')) {
             $release = $h['release_on_lose_focus'].ToString() -eq 'True'
-        }
-        else {
+        } else {
             $release = $true
         }
 
@@ -1085,8 +1623,7 @@ function Invoke-Workflow($workflow) {
 
     if ($workflow.ContainsKey('report_cycle_time')) {
         $reportCycleTime = $workflow['report_cycle_time'].ToString() -eq 'True'
-    }
-    else {
+    } else {
         $reportCycleTime = $false
     }
 
@@ -1096,7 +1633,9 @@ function Invoke-Workflow($workflow) {
     try {
         do {
             $cycle++
-            if ($maxCycles -gt 0) { Log-Info "cycle $cycle/$maxCycles starting" }
+            if ($maxCycles -gt 0) {
+                Log-Info "cycle $cycle/$maxCycles starting" 
+            }
             $cycleStart = [DateTime]::Now
 
             foreach ($step in $steps) {
@@ -1115,7 +1654,9 @@ function Invoke-Workflow($workflow) {
                         }
                     }
 
-                    while (-not (Is-WindowFocused)) { Wait-PollTick }
+                    while (-not (Is-WindowFocused)) {
+                        Wait-PollTick 
+                    }
                 }
 
                 # Re-hold keys after refocus or if dropped
@@ -1124,8 +1665,7 @@ function Invoke-Workflow($workflow) {
                     if (-not $h.Held) {
                         Hold-Key $k
                         $h.Held = $true
-                    }
-                    elseif (-not (Is-KeyHeld $k)) {
+                    } elseif (-not (Is-KeyHeld $k)) {
                         Log-Debug "$k dropped, re-pressing"
                         Hold-Key $k
                     }
@@ -1138,16 +1678,14 @@ function Invoke-Workflow($workflow) {
                 $elapsed = ([DateTime]::Now - $cycleStart).TotalSeconds
                 if ($maxCycles -gt 0) {
                     Log-Info "cycle $cycle/$maxCycles completed in $([Math]::Round($elapsed, 1))s"
-                }
-                else {
+                } else {
                     Log-Info "cycle $cycle completed in $([Math]::Round($elapsed, 1))s"
                 }
 
                 Log-Info '----------------------------------------'
             }
         } while ($maxCycles -lt 0 -or $cycle -lt $maxCycles)
-    }
-    finally {
+    } finally {
         foreach ($k in @($script:_holdKeys.Keys)) {
             if ($script:_holdKeys[$k].Held) {
                 Release-Key $k
@@ -1169,8 +1707,11 @@ if (-not $Action) {
 }
 
 # Workflow
-$yamlPath = if ($Action -like '*.yaml' -or $Action -like '*.yml') { $Action }
-else { Join-Path $PSScriptRoot "workflows\$Action.yaml" }
+$yamlPath = if ($Action -like '*.yaml' -or $Action -like '*.yml') {
+    $Action 
+} else {
+    Join-Path $PSScriptRoot "workflows\$Action.yaml" 
+}
 if (-not (Test-Path $yamlPath)) {
     Write-Error "Workflow not found: $yamlPath"
     exit 1
@@ -1180,8 +1721,7 @@ $workflow = Read-Yaml $yamlPath
 $script:_dumpToDisk = [bool]$Dump
 if ($VerbosePreference -eq 'Continue') {
     $script:_logLevel = 'DEBUG'
-}
-else {
+} else {
     $script:_logLevel = 'INFO'
 }
 
@@ -1190,7 +1730,9 @@ if ($script:_dumpToDisk) {
     $script:_logFile = Join-Path $script:_dumpDir 'cli.log'
 }
 
-Log-Info "=== $($workflow['name']) starting ==="
+Validate-Workflow $workflow
+
+Log-Info '=== workflow starting ==='
 
 $hwnd = Get-GameWindow
 if ($hwnd -eq [IntPtr]::Zero) {
@@ -1202,7 +1744,9 @@ Log-Info "Found window: $($script:WINDOW_TITLE)"
 $waitFocus = $workflow.ContainsKey('await_focus') -and $workflow['await_focus'].ToString() -eq 'True'
 if ($waitFocus) {
     Log-Info 'Waiting for game window focus...'
-    while (-not (Is-WindowFocused)) { Wait-PollTick }
+    while (-not (Is-WindowFocused)) {
+        Wait-PollTick 
+    }
     Log-Info 'Game window focused'
 }
 

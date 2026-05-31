@@ -26,7 +26,7 @@ if (Test-Path $pyBase) {
 if (-not $pyPath) {
     $pyPath = (Get-Command python -ErrorAction SilentlyContinue).Source
     if ($pyPath) {
-        $major = & $pyPath -c "import sys; print(sys.version_info[0])" 2>$null
+        $major = & $pyPath -c 'import sys; print(sys.version_info[0])' 2>$null
         if ($major -ne '3') {
             $pyPath = $null
         }
@@ -34,7 +34,7 @@ if (-not $pyPath) {
 }
 
 if (-not $pyPath) {
-    Write-Host "Python 3 not found. Installing via winget..."
+    Write-Host 'Python 3 not found. Installing via winget...'
     winget install Python.Python.3 --accept-source-agreements --accept-package-agreements
 
     $found = Get-ChildItem $pyBase -Directory |
@@ -47,11 +47,11 @@ if (-not $pyPath) {
     }
 
     if (-not $pyPath -or -not (Test-Path $pyPath)) {
-        Write-Error "Python installation failed. Please install Python 3 manually."
+        Write-Error 'Python installation failed. Please install Python 3 manually.'
         exit 1
     }
 
-    Write-Host "Python installed."
+    Write-Host 'Python installed.'
 }
 
 $ver = & $pyPath --version
@@ -67,11 +67,11 @@ $deps = @(
     'pyyaml'
 )
 
-Write-Host "Installing dependencies..."
+Write-Host 'Installing dependencies...'
 & $pyPath -m pip install --upgrade pip -q
 & $pyPath -m pip install $deps -q
 
-Write-Host "Verifying imports..."
+Write-Host 'Verifying imports...'
 $check = & $pyPath -c "
 import cv2, numpy, mss, pygetwindow, pydirectinput, yaml
 print('All imports OK')
@@ -79,8 +79,7 @@ print('All imports OK')
 
 if ($check -match 'All imports OK') {
     Write-Host $check
-}
-else {
+} else {
     Write-Error "Import check failed: $check"
     exit 1
 }

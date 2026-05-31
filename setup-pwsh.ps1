@@ -11,7 +11,7 @@ New-Item -Path $dir -ItemType Directory -Force | Out-Null
 $requiredDlls = @('OpenCvSharp.dll', 'OpenCvSharpExtern.dll', 'YamlDotNet.dll')
 $missing = $requiredDlls | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
 if (-not $missing) {
-    Write-Host "All DLLs already present. Nothing to do."
+    Write-Host 'All DLLs already present. Nothing to do.'
     exit 0
 }
 
@@ -44,12 +44,10 @@ function Expand-DllEntry([System.IO.Compression.ZipArchive]$archive, [string]$en
         $fs = [System.IO.File]::Create($dest)
         try {
             $stream.CopyTo($fs)
-        }
-        finally {
+        } finally {
             $fs.Dispose()
         }
-    }
-    finally {
+    } finally {
         $stream.Dispose()
     }
 
@@ -61,22 +59,20 @@ if (-not (Test-Path (Join-Path $dir 'OpenCvSharp.dll')) -or -not (Test-Path (Joi
     $managedVer = Resolve-LatestVersion 'OpenCvSharp4'
     $nativeVer = Resolve-LatestVersion 'OpenCvSharp4.runtime.win'
 
-    Write-Host "Downloading OpenCvSharp:"
+    Write-Host 'Downloading OpenCvSharp:'
     $managedPkg = Save-Package 'OpenCvSharp4' $managedVer
     $nativePkg = Save-Package 'OpenCvSharp4.runtime.win' $nativeVer
 
-    Write-Host "Extracting OpenCvSharp:"
+    Write-Host 'Extracting OpenCvSharp:'
     $zip = [System.IO.Compression.ZipFile]::OpenRead($managedPkg)
     try {
         $net8 = $zip.Entries | Where-Object { $_.FullName -eq 'lib/net8.0/OpenCvSharp.dll' }
         if ($net8) {
             Expand-DllEntry $zip 'lib/net8.0/OpenCvSharp.dll' 'OpenCvSharp.dll'
-        }
-        else {
+        } else {
             Expand-DllEntry $zip 'lib/netstandard2.0/OpenCvSharp.dll' 'OpenCvSharp.dll'
         }
-    }
-    finally {
+    } finally {
         $zip.Dispose()
     }
 
@@ -86,44 +82,39 @@ if (-not (Test-Path (Join-Path $dir 'OpenCvSharp.dll')) -or -not (Test-Path (Joi
         foreach ($e in $natives) {
             Expand-DllEntry $zip $e.FullName $e.Name
         }
-    }
-    finally {
+    } finally {
         $zip.Dispose()
     }
 
     Remove-Item $managedPkg, $nativePkg
-}
-else {
-    Write-Host "OpenCvSharp: already present, skipping."
+} else {
+    Write-Host 'OpenCvSharp: already present, skipping.'
 }
 
 # YamlDotNet
 if (-not (Test-Path (Join-Path $dir 'YamlDotNet.dll'))) {
     $yamlVer = Resolve-LatestVersion 'YamlDotNet'
 
-    Write-Host "Downloading YamlDotNet:"
+    Write-Host 'Downloading YamlDotNet:'
     $yamlPkg = Save-Package 'YamlDotNet' $yamlVer
 
-    Write-Host "Extracting YamlDotNet:"
+    Write-Host 'Extracting YamlDotNet:'
     $zip = [System.IO.Compression.ZipFile]::OpenRead($yamlPkg)
     try {
         $net8 = $zip.Entries | Where-Object { $_.FullName -eq 'lib/net8.0/YamlDotNet.dll' }
         if ($net8) {
             Expand-DllEntry $zip 'lib/net8.0/YamlDotNet.dll' 'YamlDotNet.dll'
-        }
-        else {
+        } else {
             $best = $zip.Entries | Where-Object { $_.FullName -like 'lib/*/YamlDotNet.dll' } | Select-Object -Last 1
             Expand-DllEntry $zip $best.FullName 'YamlDotNet.dll'
         }
-    }
-    finally {
+    } finally {
         $zip.Dispose()
     }
 
     Remove-Item $yamlPkg
-}
-else {
-    Write-Host "YamlDotNet: already present, skipping."
+} else {
+    Write-Host 'YamlDotNet: already present, skipping.'
 }
 
 Write-Host "Done. DLLs in: $dir"

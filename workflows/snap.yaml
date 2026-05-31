@@ -1,4 +1,3 @@
-name: snap
 loop: false
 focus_mode: exit
 await_focus: true

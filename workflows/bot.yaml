@@ -1,4 +1,3 @@
-name: bot
 loop: true
 focus_mode: pause
 await_focus: true

@@ -1,14 +1,14 @@
-name: bot
 loop: 1
 focus_mode: exit
 await_focus: true
 report_cycle_time: true
 steps:
-  - wait_template: autoshow_menu
+  - wait_on:
+      template: autoshow_menu
   - press: enter
   - wait:
   - press: backspace
-  - wait:
+  - wait: 0.5
   - repeat:
       key: up
       times: 2
@@ -16,20 +16,25 @@ steps:
       key: right
       times: 3
   - press: enter
-  - wait:
+  - wait_on:
+      template: target
   - repeat:
       key: right
       times: 3
   - press: enter
-  - wait_template: design
+  - wait_on:
+      template: design
   - press: enter
-  - wait_template: color
+  - wait_on:
+      template: color
   - press: enter
-  - wait_template: purchase
+  - wait_on:
+      template: purchase
   - press: enter
-  - wait_template: confirm_purchase
+  - wait_on:
+      template: confirm_purchase
   - press: enter
-  - wait_template:
+  - wait_on:
       template: after_purchase
       timeout: 20.0
   - press: escape

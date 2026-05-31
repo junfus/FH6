@@ -53,6 +53,10 @@ EDGE_WIDTH_FRAC = float(_edge["width_frac"])
 
 TEMPLATES_DIR = _ROOT / "templates"
 CAPTURE_RETRIES = 5
+YELLOW_LOWER = np.array([20, 200, 200], dtype=np.uint8)
+YELLOW_UPPER = np.array([32, 255, 255], dtype=np.uint8)
+FOCUS_LOWER = np.array([35, 150, 150], dtype=np.uint8)
+FOCUS_UPPER = np.array([75, 255, 255], dtype=np.uint8)
 
 
 # =============================================================================
@@ -97,6 +101,10 @@ def log_info(msg):
 
 def log_debug(msg):
     _logger.debug(msg)
+
+
+def is_debug_enabled():
+    return _logger.isEnabledFor(logging.DEBUG)
 
 
 def log_warning(msg):
@@ -299,13 +307,11 @@ def capture_frame(wait=None):
     ensure_dpi_aware()
     hwnd = get_game_window()
     get_monitor_size(hwnd)
-
     cx, cy, cw, ch = get_client_rect(hwnd)
+    region = {"top": cy, "left": cx, "width": cw, "height": ch}
 
     if _sct is None:
         _sct = mss.mss()
-
-    region = {"top": cy, "left": cx, "width": cw, "height": ch}
 
     last_err = None
     for att in range(CAPTURE_RETRIES):
@@ -399,21 +405,82 @@ def match_template(gray, name, frame_w=0):
     return {"score": score, "matched": score > get_threshold(name)}
 
 
-def wait_for_template(name, timeout=None, on_miss_key=None):
+def format_template_expr(expr):
+    if isinstance(expr, str):
+        return expr
+
+    keys = list(expr.keys())
+    op = keys[0]
+    items = expr[op]
+
+    joiner = " and " if op == "all" else " or "
+    return "(" + joiner.join(format_template_expr(item) for item in items) + ")"
+
+
+def eval_template_expr(gray, expr, debug=False, frame_w=0):
+    if isinstance(expr, str):
+        r = match_template(gray, expr, frame_w)
+        return {
+            "matched": r["matched"],
+            "details": [{"name": expr, "score": r["score"], "matched": r["matched"]}],
+        }
+
+    keys = list(expr.keys())
+    op = keys[0]
+    items = expr[op]
+
+    details = []
+    matched = op == "all"
+    for item in items:
+        r = eval_template_expr(gray, item, debug=debug, frame_w=frame_w)
+        details.extend(r["details"])
+        if op == "all":
+            matched = matched and r["matched"]
+            if not matched and not debug:
+                break
+        else:
+            matched = matched or r["matched"]
+            if matched and not debug:
+                break
+
+    return {"matched": matched, "details": details}
+
+
+def format_template_details(details):
+    return ", ".join(
+        f"{d['name']}={d['score']:.3f}:{'hit' if d['matched'] else 'miss'}"
+        for d in details
+    )
+
+
+def template_tag(label):
+    tag = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in label)
+    tag = tag.strip("_")
+    return tag[:80] if tag else "match"
+
+
+def wait_on_template(template_expr, timeout=None, on_miss_key=None):
     if timeout is None:
         timeout = VERIFY_TIMEOUT
 
+    label = format_template_expr(template_expr)
     start = time.time()
 
     while (time.time() - start) < timeout:
         frame = capture_frame(wait=0)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        r = match_template(gray, name)
-        log_debug(f"polling {name}: score={r['score']:.3f} matched={r['matched']}")
+        debug = is_debug_enabled()
+        r = eval_template_expr(gray, template_expr, debug=debug)
+        if debug:
+            log_debug(
+                f"polling {label}: {format_template_details(r['details'])} matched={r['matched']}"
+            )
 
         if r["matched"]:
             elapsed = time.time() - start
-            log_info(f"{name} verified (score={r['score']:.3f}, took {elapsed:.1f}s)")
+            log_info(
+                f"{label} verified ({format_template_details(r['details'])}, took {elapsed:.1f}s)"
+            )
             return
 
         wait_poll_tick()
@@ -421,8 +488,8 @@ def wait_for_template(name, timeout=None, on_miss_key=None):
             key_press(on_miss_key)
 
     frame = capture_frame(wait=0)
-    dump_diagnostics(frame, f"{name}_timeout")
-    log_error(f"Did not detect {name} within {int(timeout)}s; stopping")
+    dump_diagnostics(frame, f"{template_tag(label)}_timeout")
+    log_error(f"Did not detect {label} within {int(timeout)}s; stopping")
     raise SystemExit(1)
 
 
@@ -506,9 +573,6 @@ def get_focus_edge_hits(frame, x0, y0, x1, y1):
     cy = (y0 + y1) // 2
     probe_len = max(2, int(max(x1 - x0, y1 - y0) * 0.06))
 
-    lower = np.array([35, 150, 150])
-    upper = np.array([75, 255, 255])
-
     lines = [
         frame[y0 : y0 + probe_len, cx : cx + 1],
         frame[y1 - probe_len : y1, cx : cx + 1],
@@ -519,7 +583,7 @@ def get_focus_edge_hits(frame, x0, y0, x1, y1):
     hits = []
     for line in lines:
         hsv = cv2.cvtColor(line, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, lower, upper)
+        mask = cv2.inRange(hsv, FOCUS_LOWER, FOCUS_UPPER)
         hits.append(cv2.countNonZero(mask))
 
     return tuple(hits)
@@ -556,10 +620,11 @@ def get_grid_cells(frame):
 
             hits = get_focus_edge_hits(frame, x0, y0, x1, y1)
             is_foc = is_slot_focused(hits)
-            foc_tag = " <- FOCUS" if is_foc else ""
-            log_debug(
-                f"slot c{col}r{row} slot={x1 - x0}x{y1 - y0} hits={','.join(str(h) for h in hits)}{foc_tag}"
-            )
+            if is_debug_enabled():
+                foc_tag = " <- FOCUS" if is_foc else ""
+                log_debug(
+                    f"slot c{col}r{row} slot={x1 - x0}x{y1 - y0} hits={','.join(str(h) for h in hits)}{foc_tag}"
+                )
 
             if is_foc and focused is None:
                 focused = (col, row)
@@ -567,20 +632,10 @@ def get_grid_cells(frame):
     return {"cells": cells, "focused": focused}
 
 
-def is_target(cell, frame_w):
-    return get_match_score(cell["gray"], "target", frame_w) > get_threshold("target")
-
-
 def is_brand_new(cell):
     hsv = cv2.cvtColor(cell["yellow_bgr"], cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array([20, 200, 200]), np.array([32, 255, 255]))
+    mask = cv2.inRange(hsv, YELLOW_LOWER, YELLOW_UPPER)
     return cv2.countNonZero(mask) > 0
-
-
-def is_delete_marker(cell, frame_w):
-    return get_match_score(cell["gray"], "delete_marker", frame_w) > get_threshold(
-        "delete_marker"
-    )
 
 
 def slice_grid(frame):
@@ -604,7 +659,11 @@ def slice_grid(frame):
         log_error("Stopping")
         raise SystemExit(1)
 
-    return {"frame": frame, "cells": grid["cells"], "focused": grid["focused"]}
+    return {
+        "frame": frame,
+        "cells": grid["cells"],
+        "focused": grid["focused"],
+    }
 
 
 # =============================================================================
@@ -637,15 +696,16 @@ def is_edge_empty(gray, side):
 
     mean, stddev = cv2.meanStdDev(strip)
     empty = stddev[0][0] < EDGE_STDDEV_THRESHOLD
-    log_debug(
-        f"is_edge_empty: side={side} stddev={stddev[0][0]:.1f} threshold={EDGE_STDDEV_THRESHOLD} empty={empty}"
-    )
+    if is_debug_enabled():
+        log_debug(
+            f"is_edge_empty: side={side} stddev={stddev[0][0]:.1f} threshold={EDGE_STDDEV_THRESHOLD} empty={empty}"
+        )
     return empty
 
 
-def find_target_columns(gray):
+def find_template_columns(gray, template):
     h, w = gray.shape[:2]
-    tmpl = get_scaled("target", w)
+    tmpl = get_scaled(template, w)
     tw = tmpl.shape[1]
 
     crop_x = int((CENTER_X_C0 - SLOT_HALF_W) * w)
@@ -655,154 +715,206 @@ def find_target_columns(gray):
     roi = gray[crop_y:crop_b, crop_x:crop_r]
 
     res = cv2.matchTemplate(roi, tmpl, cv2.TM_CCOEFF_NORMED)
-    _, mask = cv2.threshold(res, get_threshold("target"), 1.0, cv2.THRESH_BINARY)
+    _, mask = cv2.threshold(res, get_threshold(template), 1.0, cv2.THRESH_BINARY)
     mask8 = (mask * 255).astype(np.uint8)
     locs = cv2.findNonZero(mask8)
 
-    hits = []
-    if locs is None:
-        count = 0
-    else:
-        count = len(locs)
-
+    count = 0 if locs is None else len(locs)
+    raw_hits = []
+    merge_width = tw / float(w)
     for i in range(count):
         px = locs[i][0][0]
         cx = (px + tw / 2.0 + crop_x) / w
+        raw_hits.append(cx)
 
-        merged = False
-        for hx in hits:
-            if abs(cx - hx) < (tw / float(w)):
-                merged = True
-                break
-
-        if not merged:
+    hits = []
+    for cx in sorted(raw_hits):
+        if not hits or abs(cx - hits[-1]) >= merge_width:
             hits.append(cx)
 
-    hits.sort()
-    log_debug(
-        f"find_target_columns: frame={w}x{h} tmpl={tw}x{tmpl.shape[0]} "
-        f"raw_count={count} merged={len(hits)} xfracs=[{', '.join(f'{x:.4f}' for x in hits)}]"
-    )
+    if is_debug_enabled():
+        log_debug(
+            f"find_template_columns: template={template} frame={w}x{h} tmpl={tw}x{tmpl.shape[0]} "
+            f"raw_count={count} merged={len(hits)} xfracs=[{', '.join(f'{x:.4f}' for x in hits)}]"
+        )
+
     return hits
 
 
-def get_target_column(x_frac):
+def get_template_column(x_frac):
     return round((x_frac - CENTER_X_C0) / COL_X_STEP)
 
 
-def analyze_frame(frame):
+def analyze_frame(frame, template, edge_side=None):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    target_cols = find_target_columns(gray)
-    is_first = is_edge_empty(gray, "left")
-    is_last = is_edge_empty(gray, "right")
-    return target_cols, is_first, is_last
+    template_cols = find_template_columns(gray, template)
+    is_first = is_edge_empty(gray, "left") if edge_side in (None, "left") else None
+    is_last = is_edge_empty(gray, "right") if edge_side in (None, "right") else None
+    return template_cols, is_first, is_last
 
 
-def scroll_left_to_target():
+def scroll_left_to(template):
     log_info("scanning left")
     lefts = 0
 
     while True:
         frame = capture_frame()
-        target_cols, is_first, _ = analyze_frame(frame)
+        template_cols, is_first, _ = analyze_frame(frame, template, edge_side="left")
         log_debug(
-            f"left scan: targets={len(target_cols)} first_page={is_first} lefts={lefts}"
+            f"left scan: matches={len(template_cols)} first_page={is_first} lefts={lefts}"
         )
 
-        if len(target_cols) > 0:
-            col = get_target_column(target_cols[0])
+        if len(template_cols) > 0:
+            col = get_template_column(template_cols[0])
 
             if col > 0:
-                log_info(f"target at c{col}, right {col}")
+                log_info(f"match at c{col}, right {col}")
                 key_repeat("right", col)
                 return 0
 
             if is_first:
-                log_info("target at c0, first page")
+                log_info("match at c0, first page")
                 return 0
         else:
             if is_first:
-                log_info(f"first page, no target (lefts={lefts})")
+                log_info(f"first page, no match (lefts={lefts})")
                 return lefts
 
         key_press("left")
         lefts += 1
 
 
-def scroll_right_to_target():
+def scroll_right_to(template):
     log_info("scanning right")
 
     while True:
         frame = capture_frame()
-        target_cols, _, is_last = analyze_frame(frame)
-        log_debug(f"right scan: targets={len(target_cols)} last_page={is_last}")
+        template_cols, _, is_last = analyze_frame(frame, template, edge_side="right")
+        log_debug(f"right scan: matches={len(template_cols)} last_page={is_last}")
 
-        if len(target_cols) > 0:
-            col = get_target_column(target_cols[0])
+        if len(template_cols) > 0:
+            col = get_template_column(template_cols[0])
             if col > 0:
                 key_repeat("right", col)
-                log_info("target at c0")
+                log_info("match at c0")
                 return {"frame": None}
 
-            log_info("target at c0")
+            log_info("match at c0")
             return {"frame": frame}
 
         if is_last:
-            log_info("last page, no target found")
+            log_info("last page, no match found")
             return None
 
         key_repeat("right", 4)
 
 
-def scroll_to_target():
-    lefts = scroll_left_to_target()
+def scroll_to(template):
+    log_info(f"scroll_to template={template}")
+    lefts = scroll_left_to(template)
 
     if lefts == 0:
         return True
 
     log_info(f"right {lefts} to return")
     key_repeat("right", lefts)
-    return scroll_right_to_target()
+    return scroll_right_to(template)
 
 
 # =============================================================================
 # Purge
 # =============================================================================
-def _purge_candidate(cells, fw, saw_target):
-    target = None
-    scan_done = False
+def brand_new_condition_passes(is_new, brand_new_filter):
+    return brand_new_filter is None or is_new == brand_new_filter
+
+
+def describe_brand_new(brand_new_filter):
+    if brand_new_filter is None:
+        return "bypass"
+    return str(brand_new_filter).lower()
+
+
+def describe_marker(marker):
+    return marker if marker else "bypass"
+
+
+def _purge_candidate(cells, frame_w, template, marker, brand_new_filter, focused):
+    candidate = None
+    focused_is_candidate = False
+    debug = is_debug_enabled()
 
     for col in range(4):
-        if scan_done:
-            break
-
         for row in range(3):
             cell = cells[col][row]
-            is_tgt = is_target(cell, fw)
-            new = is_brand_new(cell)
-            rated = is_delete_marker(cell, fw)
-            log_debug(f"slot c{col}r{row} target={is_tgt} new={new} rated={rated}")
+            template_result = match_template(cell["gray"], template, frame_w)
+            marker_result = None
+            new = None
 
-            if is_tgt:
-                saw_target = True
-                if target is None and not new and rated:
-                    target = (col, row)
+            if template_result["matched"]:
+                if marker is None:
+                    marker_matches = True
+                else:
+                    marker_result = match_template(cell["gray"], marker, frame_w)
+                    marker_matches = marker_result["matched"]
 
-            elif saw_target:
-                scan_done = True
-                break
+                if brand_new_filter is None:
+                    brand_new_matches = True
+                else:
+                    new = is_brand_new(cell)
+                    brand_new_matches = brand_new_condition_passes(
+                        new, brand_new_filter
+                    )
+                is_candidate = marker_matches and brand_new_matches
 
-    return {"target": target, "scan_done": scan_done, "saw_target": saw_target}
+                if debug:
+                    new_label = "n/a" if new is None else str(new)
+                    marker_label = (
+                        "n/a"
+                        if marker_result is None
+                        else format_template_details(
+                            [
+                                {
+                                    "name": marker,
+                                    "score": marker_result["score"],
+                                    "matched": marker_result["matched"],
+                                }
+                            ]
+                        )
+                    )
+                    log_debug(
+                        f"slot c{col}r{row} template={template}={template_result['score']:.3f}:hit marker={marker_label} brand_new={new_label} candidate={is_candidate}"
+                    )
+
+                if is_candidate:
+                    pos = (col, row)
+                    if pos == focused:
+                        candidate = pos
+                        focused_is_candidate = True
+                    elif candidate is None:
+                        candidate = pos
+
+            elif debug:
+                log_debug(
+                    f"slot c{col}r{row} template={template}={template_result['score']:.3f}:miss marker=n/a brand_new=n/a candidate=False"
+                )
+
+    return {
+        "candidate": candidate,
+        "focused_is_candidate": focused_is_candidate,
+    }
 
 
-def purge_duplicates():
+def purge(template, marker=None, brand_new_filter=None):
     deletions = 0
     iter_idx = 0
+    log_info(
+        f"purge template={template} marker={describe_marker(marker)} brand_new={describe_brand_new(brand_new_filter)}"
+    )
 
     while True:
-        result = scroll_right_to_target()
+        result = scroll_right_to(template)
         if result is None:
-            log_info(f"No more targets; done ({deletions} deletions)")
+            log_info(f"No more matches; done ({deletions} deletions)")
             return
 
         frame = result["frame"] if result["frame"] is not None else capture_frame()
@@ -810,10 +922,17 @@ def purge_duplicates():
         if dump_is_enabled():
             dump_save_cells(slices["cells"], f"iter{iter_idx}")
 
-        fw = slices["frame"].shape[1]
-        scan = _purge_candidate(slices["cells"], fw, False)
+        frame_w = slices["frame"].shape[1]
+        scan = _purge_candidate(
+            slices["cells"],
+            frame_w,
+            template,
+            marker,
+            brand_new_filter,
+            slices["focused"],
+        )
 
-        if scan["target"] is None:
+        if scan["candidate"] is None:
             if is_edge_empty(
                 cv2.cvtColor(slices["frame"], cv2.COLOR_BGR2GRAY), "right"
             ):
@@ -824,9 +943,12 @@ def purge_duplicates():
             key_repeat("right", 4)
             continue
 
-        t = scan["target"]
-        log_info(f"candidate at c{t[0]}r{t[1]}")
-        move_cursor(slices["focused"], t)
+        t = scan["candidate"]
+        if scan["focused_is_candidate"]:
+            log_info(f"focused candidate at c{t[0]}r{t[1]}")
+        else:
+            log_info(f"candidate at c{t[0]}r{t[1]}")
+            move_cursor(slices["focused"], t)
         key_press("enter")
         wait_for_refresh()
         key_repeat("down", 4)
@@ -859,7 +981,12 @@ def invoke_snap():
 # =============================================================================
 # Detect
 # =============================================================================
+_last_detect_match_time = None
+
+
 def invoke_detect(screen_map):
+    global _last_detect_match_time
+
     try:
         frame = capture_frame(wait=POLL_INTERVAL)
     except Exception as e:
@@ -870,18 +997,283 @@ def invoke_detect(screen_map):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     matched = None
-    match_score = 0.0
+    match_details = None
     for n in screen_map:
         r = match_template(gray, n)
         if r["matched"]:
             matched = n
-            match_score = r["score"]
+            match_details = [{"name": n, "score": r["score"], "matched": True}]
             break
 
     if matched:
+        now = time.time()
+        if _last_detect_match_time is None:
+            timing = "first match"
+        else:
+            timing = f"since last match {now - _last_detect_match_time:.1f}s"
+        _last_detect_match_time = now
+
         key = screen_map[matched]
-        log_info(f"screen={matched} score={match_score} -> press {key}")
+        log_info(
+            f"screen={matched} verified ({format_template_details(match_details)}, {timing}) -> press {key}"
+        )
         key_press(key)
+
+
+# =============================================================================
+# Workflow validation
+# =============================================================================
+def validate_template_expr(action, expr):
+    if isinstance(expr, str):
+        if expr == "":
+            log_error(f"{action} template must not be empty")
+            raise SystemExit(1)
+        return
+
+    if isinstance(expr, list):
+        log_error(f"{action} template lists must be under all or any")
+        raise SystemExit(1)
+
+    if not isinstance(expr, dict):
+        log_error(f"{action} template must be a template name or an all/any expression")
+        raise SystemExit(1)
+
+    keys = list(expr.keys())
+    if len(keys) != 1 or keys[0] not in ("all", "any"):
+        log_error(
+            f"{action} template expression must contain exactly one key: all or any"
+        )
+        raise SystemExit(1)
+
+    op = keys[0]
+    items = expr[op]
+    if not isinstance(items, list) or not items:
+        log_error(f"{action} template {op} expression must be a non-empty list")
+        raise SystemExit(1)
+
+    for item in items:
+        validate_template_expr(action, item)
+
+
+def read_template_expr(action, value):
+    if not isinstance(value, dict):
+        log_error(f"{action} requires a mapping with template")
+        raise SystemExit(1)
+
+    if "match" in value:
+        log_error(f"{action} uses template, not match")
+        raise SystemExit(1)
+
+    if "template" not in value:
+        log_error(f"{action} requires template")
+        raise SystemExit(1)
+
+    validate_template_expr(action, value["template"])
+    return value["template"]
+
+
+def read_template(action, value):
+    if not isinstance(value, str):
+        log_error(f"{action} requires a single template name")
+        raise SystemExit(1)
+
+    return value
+
+
+def read_mapping_template(action, value):
+    if not isinstance(value, dict):
+        log_error(f"{action} requires a mapping with template")
+        raise SystemExit(1)
+
+    if "match" in value:
+        log_error(f"{action} uses template, not match")
+        raise SystemExit(1)
+
+    if "template" not in value:
+        log_error(f"{action} requires template")
+        raise SystemExit(1)
+
+    if not isinstance(value["template"], str):
+        log_error(f"{action} template must be a single template name")
+        raise SystemExit(1)
+
+    return value["template"]
+
+
+def read_marker(action, value):
+    if not isinstance(value, dict) or "marker" not in value or value["marker"] is None:
+        return None
+
+    if not isinstance(value["marker"], str):
+        log_error(f"{action} marker must be a single template name")
+        raise SystemExit(1)
+
+    return value["marker"]
+
+
+def read_brand_new(action, value):
+    if not isinstance(value, dict):
+        log_error(f"{action} requires a mapping with brand_new")
+        raise SystemExit(1)
+
+    if "brand_new" not in value or value["brand_new"] is None:
+        log_error(f"{action} requires brand_new: true, false, or bypass")
+        raise SystemExit(1)
+
+    brand_new = value["brand_new"]
+    if isinstance(brand_new, bool):
+        return brand_new
+
+    if isinstance(brand_new, str) and brand_new.lower() == "bypass":
+        return None
+
+    log_error(f"{action} brand_new must be true, false, or bypass")
+    raise SystemExit(1)
+
+
+def validate_number(action, value, field="value", integer=False, allow_empty=False):
+    if value is None or str(value) == "":
+        if allow_empty:
+            return
+        log_error(f"{action} requires {field}")
+        raise SystemExit(1)
+
+    try:
+        parsed = int(value) if integer else float(value)
+    except (TypeError, ValueError):
+        kind = "integer" if integer else "number"
+        log_error(f"{action} {field} must be a {kind}")
+        raise SystemExit(1)
+
+    if parsed < 0:
+        log_error(f"{action} {field} must be >= 0")
+        raise SystemExit(1)
+
+
+def read_repeat(action, value):
+    if not isinstance(value, dict):
+        log_error(f"{action} requires key and times")
+        raise SystemExit(1)
+
+    if "key" not in value or value["key"] is None or str(value["key"]) == "":
+        log_error(f"{action} requires key")
+        raise SystemExit(1)
+
+    if "times" not in value or value["times"] is None:
+        log_error(f"{action} requires times")
+        raise SystemExit(1)
+
+    try:
+        times = int(value["times"])
+    except (TypeError, ValueError):
+        log_error(f"{action} times must be an integer")
+        raise SystemExit(1)
+
+    if times < 0:
+        log_error(f"{action} times must be >= 0")
+        raise SystemExit(1)
+
+    return str(value["key"]), times
+
+
+def validate_step(step, index):
+    if not isinstance(step, dict) or len(step) != 1:
+        log_error(f"step {index} must be a single action mapping")
+        raise SystemExit(1)
+
+    action = list(step.keys())[0]
+    value = step[action]
+
+    if action == "press":
+        if value is None or str(value) == "":
+            log_error(f"step {index} press requires a key")
+            raise SystemExit(1)
+    elif action == "repeat":
+        read_repeat(action, value)
+    elif action == "wait":
+        validate_number(action, value, allow_empty=True)
+    elif action == "countdown":
+        validate_number(action, value, integer=True, allow_empty=True)
+    elif action == "wait_on":
+        read_template_expr(action, value)
+        if "timeout" in value and value["timeout"] is not None:
+            validate_number(action, value["timeout"], field="timeout")
+        if "on_miss" in value and (
+            value["on_miss"] is None or str(value["on_miss"]) == ""
+        ):
+            log_error("wait_on on_miss must be a key")
+            raise SystemExit(1)
+    elif action == "scroll_to":
+        read_template(action, value)
+    elif action == "purge":
+        read_mapping_template(action, value)
+        read_marker(action, value)
+        read_brand_new(action, value)
+    elif action == "snap":
+        if value not in (None, ""):
+            log_error("snap does not accept arguments")
+            raise SystemExit(1)
+    elif action == "detect":
+        if not isinstance(value, dict) or not value:
+            log_error("detect requires one or more template-to-key mappings")
+            raise SystemExit(1)
+        for template, key in value.items():
+            if template is None or str(template) == "" or key is None or str(key) == "":
+                log_error("detect mappings must be template: key")
+                raise SystemExit(1)
+    else:
+        log_error(f"Unknown action: {action}")
+        raise SystemExit(1)
+
+
+def validate_workflow(workflow):
+    if not isinstance(workflow, dict):
+        log_error("workflow must be a mapping")
+        raise SystemExit(1)
+
+    if (
+        "steps" not in workflow
+        or not isinstance(workflow["steps"], list)
+        or not workflow["steps"]
+    ):
+        log_error("workflow requires non-empty steps")
+        raise SystemExit(1)
+
+    if "loop" in workflow and workflow["loop"] not in (True, False):
+        validate_number("workflow", workflow["loop"], field="loop", integer=True)
+
+    if "focus_mode" in workflow and str(workflow["focus_mode"]) not in (
+        "exit",
+        "pause",
+    ):
+        log_error("workflow focus_mode must be exit or pause")
+        raise SystemExit(1)
+
+    for field in ("await_focus", "report_cycle_time"):
+        if field in workflow and not isinstance(workflow[field], bool):
+            log_error(f"workflow {field} must be true or false")
+            raise SystemExit(1)
+
+    if "hold" in workflow:
+        hold = workflow["hold"]
+        if (
+            not isinstance(hold, dict)
+            or "key" not in hold
+            or hold["key"] is None
+            or str(hold["key"]) == ""
+        ):
+            log_error("workflow hold requires key")
+            raise SystemExit(1)
+        if "release_on_lose_focus" in hold and not isinstance(
+            hold["release_on_lose_focus"], bool
+        ):
+            log_error("workflow hold release_on_lose_focus must be true or false")
+            raise SystemExit(1)
+
+    for index, step in enumerate(workflow["steps"], start=1):
+        validate_step(step, index)
+
+    log_info("Validated workflow")
 
 
 # =============================================================================
@@ -910,26 +1302,28 @@ def run_step(step):
         else:
             wait_countdown(int(value), "Waiting")
 
-    elif name == "wait_template":
-        if isinstance(value, str):
-            wait_for_template(value)
+    elif name == "wait_on":
+        template_expr = value["template"]
+        tout = float(value["timeout"]) if value.get("timeout") else VERIFY_TIMEOUT
+        on_miss = value.get("on_miss")
+        if on_miss:
+            wait_on_template(template_expr, timeout=tout, on_miss_key=str(on_miss))
         else:
-            tmpl = str(value["template"])
-            tout = float(value["timeout"]) if value.get("timeout") else VERIFY_TIMEOUT
-            on_miss = value.get("on_miss")
-            if on_miss:
-                wait_for_template(tmpl, timeout=tout, on_miss_key=str(on_miss))
-            else:
-                wait_for_template(tmpl, timeout=tout)
+            wait_on_template(template_expr, timeout=tout)
 
-    elif name == "scroll_to_target":
-        result = scroll_to_target()
+    elif name == "scroll_to":
+        result = scroll_to(str(value))
         if result is None:
-            log_info("No targets found; stopping")
+            log_info("No matches found; stopping")
             sys.exit(0)
 
-    elif name == "purge_duplicates":
-        purge_duplicates()
+    elif name == "purge":
+        brand_new = value["brand_new"]
+        purge(
+            str(value["template"]),
+            str(value["marker"]) if value.get("marker") else None,
+            None if isinstance(brand_new, str) else brand_new,
+        )
 
     elif name == "snap":
         invoke_snap()
@@ -937,10 +1331,6 @@ def run_step(step):
     elif name == "detect":
         screen_map = {str(k): str(v) for k, v in value.items()}
         invoke_detect(screen_map)
-
-    else:
-        log_error(f"Unknown action: {name}")
-        sys.exit(1)
 
     log_set_step(None)
 
@@ -1067,8 +1457,9 @@ def main():
         log_file = None
 
     log_setup(verbose=args.verbose, log_file=log_file)
+    validate_workflow(workflow)
 
-    log_info(f"=== {workflow['name']} starting ===")
+    log_info("=== workflow starting ===")
 
     hwnd = get_game_window()
     if hwnd is None:
