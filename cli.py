@@ -1032,20 +1032,18 @@ def invoke_detect(screen_map, count_template, count_limit=None):
         _last_detect_match_time = now
 
         key = screen_map[matched]
-        count_reached = False
         if matched == count_template:
+            if count_limit is not None and _detect_count >= count_limit:
+                log_info(
+                    f"{count_template}_count={_detect_count}, count={count_limit} reached; stopping"
+                )
+                raise SystemExit(0)
+
             _detect_count += 1
             log_info(f"{count_template}_count={_detect_count}")
-            count_reached = count_limit is not None and _detect_count >= count_limit
 
         log_info(f"{format_template_details(match_details)}, {timing} -> press {key}")
         key_press(key)
-
-        if count_reached:
-            log_info(
-                f"{count_template}_count={_detect_count}, count={count_limit} reached; stopping"
-            )
-            raise SystemExit(0)
 
 
 # =============================================================================

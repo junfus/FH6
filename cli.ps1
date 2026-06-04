@@ -1160,19 +1160,16 @@ function Invoke-Detect([System.Collections.IDictionary]$screenMap, [string]$coun
         $script:_lastDetectMatchAt = $now
 
         $key = $screenMap[$matched]
-        $countReached = $false
         if ($matched -eq $countTemplate) {
+            if ($countLimit -gt 0 -and $script:_detectCount -ge $countLimit) {
+                Log-Info "$($countTemplate)_count=$($script:_detectCount), count=$countLimit reached; stopping"
+                exit 0
+            }
             $script:_detectCount++
             Log-Info "$($countTemplate)_count=$($script:_detectCount)"
-            $countReached = $countLimit -gt 0 -and $script:_detectCount -ge $countLimit
         }
         Log-Info "$(Format-TemplateDetails $matchDetails), $timing -> press $key"
         Press-Key $key
-
-        if ($countReached) {
-            Log-Info "$($countTemplate)_count=$($script:_detectCount), count=$countLimit reached; stopping"
-            exit 0
-        }
     }
 }
 
