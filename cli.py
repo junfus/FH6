@@ -1034,9 +1034,7 @@ def invoke_detect(screen_map, count_template, count_limit=None):
         key = screen_map[matched]
         if matched == count_template:
             if count_limit is not None and _detect_count >= count_limit:
-                log_info(
-                    f"{count_template}_count={_detect_count}, count={count_limit} reached; stopping"
-                )
+                log_info(f"total {count_limit} reached; stopping")
                 raise SystemExit(0)
 
             _detect_count += 1

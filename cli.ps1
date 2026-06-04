@@ -1162,7 +1162,7 @@ function Invoke-Detect([System.Collections.IDictionary]$screenMap, [string]$coun
         $key = $screenMap[$matched]
         if ($matched -eq $countTemplate) {
             if ($countLimit -gt 0 -and $script:_detectCount -ge $countLimit) {
-                Log-Info "$($countTemplate)_count=$($script:_detectCount), count=$countLimit reached; stopping"
+                Log-Info "total $countLimit reached; stopping"
                 exit 0
             }
             $script:_detectCount++
