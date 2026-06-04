@@ -60,17 +60,17 @@ python cli.py C:\Users\me\my_custom.yaml
 
 ### Steps
 
-| Step                                                                 | Description                                                                                         |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `press: enter`                                                       | Send a single key                                                                                   |
-| `repeat: {key: down, times: 4}`                                      | Send a key N times                                                                                  |
-| `wait:`                                                              | Sleep `reframe_interval`. Explicit: `wait: 2.0`                                                     |
-| `countdown: 3`                                                       | Visible countdown before proceeding (default 3s)                                                    |
-| `wait_on: {template: home_menu}`                                     | Poll screen until a template condition succeeds                                                     |
-| `scroll_to: target`                                                  | Scroll the car grid to the first matching template column                                           |
-| `purge: {template: target, marker: delete_marker, brand_new: false}` | Delete matching cars                                                                                |
-| `snap:`                                                              | Capture frame + slice 12 grid cells to dump folder                                                  |
-| `detect: {start: enter, ...}`                                        | Match screen against templates, press the mapped key on hit. For state-machine loops like wheelspin |
+| Step                                                                 | Description                                                   |
+| -------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `press: enter`                                                       | Send a single key                                             |
+| `repeat: {key: down, times: 4}`                                      | Send a key N times                                            |
+| `wait:`                                                              | Sleep `reframe_interval`. Explicit: `wait: 2.0`               |
+| `countdown: 3`                                                       | Visible countdown before proceeding (default 3s)              |
+| `wait_on: {template: home_menu}`                                     | Poll screen until a template condition succeeds               |
+| `scroll_to: target`                                                  | Scroll the car grid to the first matching template column     |
+| `purge: {template: target, marker: delete_marker, brand_new: false}` | Delete matching cars                                          |
+| `snap:`                                                              | Capture frame + write slot and brand-new crops to dump folder |
+| `detect: {templates: {start: enter, ...}}`                           | Match templates and press the mapped key on hit               |
 
 ### Action arguments
 
@@ -84,9 +84,11 @@ python cli.py C:\Users\me\my_custom.yaml
 | `scroll_to` | single template name as value                          | none                 |
 | `purge`     | `template`, `brand_new` (`true`, `false`, or `bypass`) | `marker`             |
 | `snap`      | none                                                   | none                 |
-| `detect`    | one or more `template: key` mappings                   | none                 |
+| `detect`    | `templates`                                            | `count`              |
 
 `wait_on.template` accepts a single template name or an explicit boolean expression. `scroll_to`, `purge.template`, and `purge.marker` accept single template names only.
+
+`detect.count` counts matches of the first entry under `templates`. The counted match still presses its key; the script stops after that key press when the count reaches the limit.
 
 For template expressions, lists are only valid under `all` or `any`; bare `template: [a, b]` is intentionally invalid.
 
@@ -131,7 +133,15 @@ For template expressions, lists are only valid under `all` or `any`; bare `templ
 - snap:
 
 - detect:
-    start: enter
-    result: x
-    confirm: enter
+    templates:
+      start: enter
+      result: x
+      confirm: enter
+
+- detect:
+    count: 100
+    templates:
+      start: enter
+      result: x
+      confirm: enter
 ```

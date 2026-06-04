@@ -40,7 +40,9 @@ Add-Type -Path (Join-Path $script:_dllDir 'YamlDotNet.dll') -ErrorAction Silentl
 # ============================================================================
 function Read-Yaml([string]$path) {
     $text = Get-Content $path -Raw
-    $deserializer = [YamlDotNet.Serialization.DeserializerBuilder]::new().Build()
+    $deserializer = [YamlDotNet.Serialization.DeserializerBuilder]::new().
+    WithAttemptingUnquotedStringTypeDeserialization().
+    Build()
     return $deserializer.Deserialize[object]($text)
 }
 
@@ -166,6 +168,7 @@ $script:_dumpToDisk = $false
 $script:_logFile = $null
 $script:_logLevel = 'INFO'
 $script:_lastDetectMatchAt = $null
+$script:_detectCount = 0
 
 $script:YELLOW_LOWER = [OpenCvSharp.Scalar]::new(20, 200, 200)
 $script:YELLOW_UPPER = [OpenCvSharp.Scalar]::new(32, 255, 255)
@@ -1117,7 +1120,7 @@ function Invoke-Snap {
 # ============================================================================
 # Detect
 # ============================================================================
-function Invoke-Detect([hashtable]$screenMap) {
+function Invoke-Detect([System.Collections.IDictionary]$screenMap, [string]$countTemplate, [int]$countLimit = 0) {
     try {
         $frame = Capture-Frame -wait $script:POLL_INTERVAL
     } catch {
@@ -1157,8 +1160,19 @@ function Invoke-Detect([hashtable]$screenMap) {
         $script:_lastDetectMatchAt = $now
 
         $key = $screenMap[$matched]
+        $countReached = $false
+        if ($matched -eq $countTemplate) {
+            $script:_detectCount++
+            Log-Info "$($countTemplate)_count=$($script:_detectCount)"
+            $countReached = $countLimit -gt 0 -and $script:_detectCount -ge $countLimit
+        }
         Log-Info "$(Format-TemplateDetails $matchDetails), $timing -> press $key"
         Press-Key $key
+
+        if ($countReached) {
+            Log-Info "$($countTemplate)_count=$($script:_detectCount), count=$countLimit reached; stopping"
+            exit 0
+        }
     }
 }
 
@@ -1242,20 +1256,71 @@ function Read-BrandNew([string]$actionName, $actionValue) {
         return [bool]$brandNew
     }
 
-    if ($brandNew.ToString() -eq 'True') {
-        return $true
-    }
-
-    if ($brandNew.ToString() -eq 'False') {
-        return $false
-    }
-
     if ($brandNew -is [string] -and $brandNew.ToLowerInvariant() -eq 'bypass') {
         return $null
     }
 
     Log-Error "$actionName brand_new must be true, false, or bypass"
     exit 1
+}
+
+function Read-Detect([string]$actionName, $actionValue) {
+    if (-not ($actionValue -is [System.Collections.IDictionary]) -or @($actionValue.Keys).Count -eq 0) {
+        Log-Error 'detect requires templates'
+        exit 1
+    }
+
+    $countLimit = 0
+    if (-not $actionValue.ContainsKey('templates')) {
+        Log-Error 'detect requires templates'
+        exit 1
+    }
+
+    foreach ($key in $actionValue.Keys) {
+        $name = $key.ToString()
+        if ($name -ne 'count' -and $name -ne 'templates') {
+            Log-Error 'detect only accepts count and templates'
+            exit 1
+        }
+    }
+
+    if ($actionValue.ContainsKey('count')) {
+        if ($actionValue['count'] -is [bool]) {
+            Log-Error 'detect count must be an integer'
+            exit 1
+        }
+
+        try {
+            $countLimit = [int]$actionValue['count']
+        } catch {
+            Log-Error 'detect count must be an integer'
+            exit 1
+        }
+
+        if ($countLimit -le 0) {
+            Log-Error 'detect count must be > 0'
+            exit 1
+        }
+    }
+
+    $templates = $actionValue['templates']
+
+    if (-not ($templates -is [System.Collections.IDictionary]) -or @($templates.Keys).Count -eq 0) {
+        Log-Error 'detect templates requires one or more template-to-key mappings'
+        exit 1
+    }
+
+    foreach ($kv in $templates.GetEnumerator()) {
+        if ($null -eq $kv.Key -or $kv.Key.ToString() -eq '' -or $null -eq $kv.Value -or $kv.Value.ToString() -eq '') {
+            Log-Error 'detect mappings must be template: key'
+            exit 1
+        }
+    }
+
+    return [pscustomobject]@{
+        Templates  = $templates
+        CountLimit = $countLimit
+    }
 }
 
 function Format-BrandNew($brandNewFilter) {
@@ -1424,16 +1489,7 @@ function Validate-Step($step, [int]$index) {
             }
         }
         'detect' {
-            if (-not ($actionValue -is [System.Collections.IDictionary]) -or @($actionValue.Keys).Count -eq 0) {
-                Log-Error 'detect requires one or more template-to-key mappings'
-                exit 1
-            }
-            foreach ($kv in $actionValue.GetEnumerator()) {
-                if ($null -eq $kv.Key -or $kv.Key.ToString() -eq '' -or $null -eq $kv.Value -or $kv.Value.ToString() -eq '') {
-                    Log-Error 'detect mappings must be template: key'
-                    exit 1
-                }
-            }
+            [void](Read-Detect $actionName $actionValue)
         }
         default {
             Log-Error "Unknown action: $actionName"
@@ -1453,7 +1509,7 @@ function Validate-Workflow($workflow) {
         exit 1
     }
 
-    if ($workflow.ContainsKey('loop') -and $workflow['loop'].ToString() -ne 'True' -and $workflow['loop'].ToString() -ne 'False') {
+    if ($workflow.ContainsKey('loop') -and -not ($workflow['loop'] -is [bool])) {
         Validate-Number 'workflow' $workflow['loop'] -field 'loop' -integer $true
     }
 
@@ -1463,7 +1519,7 @@ function Validate-Workflow($workflow) {
     }
 
     foreach ($field in @('await_focus', 'report_cycle_time')) {
-        if ($workflow.ContainsKey($field) -and $workflow[$field].ToString() -ne 'True' -and $workflow[$field].ToString() -ne 'False') {
+        if ($workflow.ContainsKey($field) -and -not ($workflow[$field] -is [bool])) {
             Log-Error "workflow $field must be true or false"
             exit 1
         }
@@ -1475,7 +1531,7 @@ function Validate-Workflow($workflow) {
             Log-Error 'workflow hold requires key'
             exit 1
         }
-        if ($hold.ContainsKey('release_on_lose_focus') -and $hold['release_on_lose_focus'].ToString() -ne 'True' -and $hold['release_on_lose_focus'].ToString() -ne 'False') {
+        if ($hold.ContainsKey('release_on_lose_focus') -and -not ($hold['release_on_lose_focus'] -is [bool])) {
             Log-Error 'workflow hold release_on_lose_focus must be true or false'
             exit 1
         }
@@ -1539,14 +1595,7 @@ function Invoke-Step($step) {
             }
         }
         'purge' {
-            $brandNew = $actionValue['brand_new']
-            if ($brandNew.ToString() -eq 'True') {
-                $brandNewFilter = $true
-            } elseif ($brandNew.ToString() -eq 'False') {
-                $brandNewFilter = $false
-            } else {
-                $brandNewFilter = $null
-            }
+            $brandNewFilter = Read-BrandNew $actionName $actionValue
             if ($actionValue.ContainsKey('marker') -and $null -ne $actionValue['marker']) {
                 $marker = $actionValue['marker'].ToString()
             } else {
@@ -1561,12 +1610,18 @@ function Invoke-Step($step) {
             Invoke-Snap
         }
         'detect' {
-            $screenMap = @{}
-            foreach ($kv in $actionValue.GetEnumerator()) {
-                $screenMap[$kv.Key.ToString()] = $kv.Value.ToString()
+            $detectSpec = Read-Detect $actionName $actionValue
+            $screenMap = [ordered]@{}
+            $countTemplate = $null
+            foreach ($kv in $detectSpec.Templates.GetEnumerator()) {
+                $template = $kv.Key.ToString()
+                if ($null -eq $countTemplate) {
+                    $countTemplate = $template
+                }
+                $screenMap[$template] = $kv.Value.ToString()
             }
 
-            Invoke-Detect $screenMap
+            Invoke-Detect $screenMap $countTemplate $detectSpec.CountLimit
         }
     }
 
@@ -1583,13 +1638,12 @@ function Invoke-Workflow($workflow) {
         $loopVal = $false
     }
 
-    $lv = $loopVal.ToString()
-    if ($lv -eq 'True') {
+    if ($loopVal -is [bool] -and [bool]$loopVal) {
         $maxCycles = -1
-    } elseif ($lv -eq 'False') {
+    } elseif ($loopVal -is [bool] -and -not [bool]$loopVal) {
         $maxCycles = 1
     } else {
-        $maxCycles = [int]$lv
+        $maxCycles = [int]$loopVal
     }
 
     if ($maxCycles -eq 0) {
@@ -1608,7 +1662,7 @@ function Invoke-Workflow($workflow) {
         $h = $workflow['hold']
         $k = $h['key'].ToString().ToUpper()
         if ($h.ContainsKey('release_on_lose_focus')) {
-            $release = $h['release_on_lose_focus'].ToString() -eq 'True'
+            $release = [bool]$h['release_on_lose_focus']
         } else {
             $release = $true
         }
@@ -1622,7 +1676,7 @@ function Invoke-Workflow($workflow) {
     }
 
     if ($workflow.ContainsKey('report_cycle_time')) {
-        $reportCycleTime = $workflow['report_cycle_time'].ToString() -eq 'True'
+        $reportCycleTime = [bool]$workflow['report_cycle_time']
     } else {
         $reportCycleTime = $false
     }
@@ -1741,7 +1795,7 @@ if ($hwnd -eq [IntPtr]::Zero) {
 }
 Log-Info "Found window: $($script:WINDOW_TITLE)"
 
-$waitFocus = $workflow.ContainsKey('await_focus') -and $workflow['await_focus'].ToString() -eq 'True'
+$waitFocus = $workflow.ContainsKey('await_focus') -and [bool]$workflow['await_focus']
 if ($waitFocus) {
     Log-Info 'Waiting for game window focus...'
     while (-not (Is-WindowFocused)) {

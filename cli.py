@@ -149,6 +149,11 @@ class _MONITORINFO(ctypes.Structure):
     ]
 
 
+_WNDENUMPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+)
+
+
 def ensure_dpi_aware():
     global _dpi_aware_set
     if not _dpi_aware_set:
@@ -160,12 +165,30 @@ def ensure_dpi_aware():
         _dpi_aware_set = True
 
 
+def get_window_title(hwnd):
+    length = _user32.GetWindowTextLengthW(hwnd)
+    if length == 0:
+        return ""
+
+    buf = ctypes.create_unicode_buffer(length + 1)
+    _user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
 def get_game_window():
     global _hwnd
     if _hwnd is None:
-        hwnd = _user32.FindWindowW(None, WINDOW_TITLE)
-        if hwnd:
-            _hwnd = hwnd
+        matches = []
+
+        def enum_window(hwnd, _):
+            if WINDOW_TITLE in get_window_title(hwnd):
+                matches.append(hwnd)
+                return False
+            return True
+
+        _user32.EnumWindows(_WNDENUMPROC(enum_window), 0)
+        if matches:
+            _hwnd = matches[0]
 
     return _hwnd
 
@@ -176,13 +199,7 @@ def is_window_focused():
         if not fg:
             return False
 
-        length = _user32.GetWindowTextLengthW(fg)
-        if length == 0:
-            return False
-
-        buf = ctypes.create_unicode_buffer(length + 1)
-        _user32.GetWindowTextW(fg, buf, length + 1)
-        return WINDOW_TITLE in buf.value
+        return WINDOW_TITLE in get_window_title(fg)
     except Exception:
         return False
 
@@ -812,7 +829,7 @@ def scroll_to(template):
     lefts = scroll_left_to(template)
 
     if lefts == 0:
-        return True
+        return 0
 
     log_info(f"right {lefts} to return")
     key_repeat("right", lefts)
@@ -971,19 +988,22 @@ def invoke_snap():
 
     for col in range(4):
         for row in range(3):
-            cv2.imwrite(str(d / f"c{col}r{row}.png"), g["cells"][col][row]["bgr"])
+            cell = g["cells"][col][row]
+            cv2.imwrite(str(d / f"c{col}r{row}_slot.png"), cell["bgr"])
+            cv2.imwrite(str(d / f"c{col}r{row}_brand_new.png"), cell["yellow_bgr"])
 
-    log_info(f"wrote frame + 12 slots to {d}")
+    log_info(f"wrote frame + 24 slot crops to {d}")
 
 
 # =============================================================================
 # Detect
 # =============================================================================
 _last_detect_match_time = None
+_detect_count = 0
 
 
-def invoke_detect(screen_map):
-    global _last_detect_match_time
+def invoke_detect(screen_map, count_template, count_limit=None):
+    global _last_detect_match_time, _detect_count
 
     try:
         frame = capture_frame(wait=POLL_INTERVAL)
@@ -1012,8 +1032,20 @@ def invoke_detect(screen_map):
         _last_detect_match_time = now
 
         key = screen_map[matched]
+        count_reached = False
+        if matched == count_template:
+            _detect_count += 1
+            log_info(f"{count_template}_count={_detect_count}")
+            count_reached = count_limit is not None and _detect_count >= count_limit
+
         log_info(f"{format_template_details(match_details)}, {timing} -> press {key}")
         key_press(key)
+
+        if count_reached:
+            log_info(
+                f"{count_template}_count={_detect_count}, count={count_limit} reached; stopping"
+            )
+            raise SystemExit(0)
 
 
 # =============================================================================
@@ -1127,6 +1159,50 @@ def read_brand_new(action, value):
     raise SystemExit(1)
 
 
+def read_detect(action, value):
+    if not isinstance(value, dict) or not value:
+        log_error("detect requires templates")
+        raise SystemExit(1)
+
+    count_limit = None
+    if "templates" not in value:
+        log_error("detect requires templates")
+        raise SystemExit(1)
+
+    unexpected = set(value) - {"count", "templates"}
+    if unexpected:
+        log_error("detect only accepts count and templates")
+        raise SystemExit(1)
+
+    if "count" in value:
+        if isinstance(value["count"], bool):
+            log_error("detect count must be an integer")
+            raise SystemExit(1)
+
+        try:
+            count_limit = int(value["count"])
+        except (TypeError, ValueError):
+            log_error("detect count must be an integer")
+            raise SystemExit(1)
+
+        if count_limit <= 0:
+            log_error("detect count must be > 0")
+            raise SystemExit(1)
+
+    templates = value["templates"]
+
+    if not isinstance(templates, dict) or not templates:
+        log_error("detect templates requires one or more template-to-key mappings")
+        raise SystemExit(1)
+
+    for template, key in templates.items():
+        if template is None or str(template) == "" or key is None or str(key) == "":
+            log_error("detect mappings must be template: key")
+            raise SystemExit(1)
+
+    return {str(k): str(v) for k, v in templates.items()}, count_limit
+
+
 def validate_number(action, value, field="value", integer=False, allow_empty=False):
     if value is None or str(value) == "":
         if allow_empty:
@@ -1210,13 +1286,7 @@ def validate_step(step, index):
             log_error("snap does not accept arguments")
             raise SystemExit(1)
     elif action == "detect":
-        if not isinstance(value, dict) or not value:
-            log_error("detect requires one or more template-to-key mappings")
-            raise SystemExit(1)
-        for template, key in value.items():
-            if template is None or str(template) == "" or key is None or str(key) == "":
-                log_error("detect mappings must be template: key")
-                raise SystemExit(1)
+        read_detect(action, value)
     else:
         log_error(f"Unknown action: {action}")
         raise SystemExit(1)
@@ -1235,7 +1305,7 @@ def validate_workflow(workflow):
         log_error("workflow requires non-empty steps")
         raise SystemExit(1)
 
-    if "loop" in workflow and workflow["loop"] not in (True, False):
+    if "loop" in workflow and not isinstance(workflow["loop"], bool):
         validate_number("workflow", workflow["loop"], field="loop", integer=True)
 
     if "focus_mode" in workflow and str(workflow["focus_mode"]) not in (
@@ -1314,19 +1384,19 @@ def run_step(step):
             sys.exit(0)
 
     elif name == "purge":
-        brand_new = value["brand_new"]
         purge(
             str(value["template"]),
-            str(value["marker"]) if value.get("marker") else None,
-            None if isinstance(brand_new, str) else brand_new,
+            read_marker(name, value),
+            read_brand_new(name, value),
         )
 
     elif name == "snap":
         invoke_snap()
 
     elif name == "detect":
-        screen_map = {str(k): str(v) for k, v in value.items()}
-        invoke_detect(screen_map)
+        screen_map, count_limit = read_detect(name, value)
+        count_template = next(iter(screen_map))
+        invoke_detect(screen_map, count_template, count_limit)
 
     log_set_step(None)
 
@@ -1425,12 +1495,19 @@ def run_workflow(workflow):
 # =============================================================================
 def main():
     parser = argparse.ArgumentParser(description="Forza Horizon 6 automation CLI")
-    parser.add_argument("action", help="Workflow name or path to YAML file")
+    parser.add_argument("action", nargs="?", help="Workflow name or path to YAML file")
     parser.add_argument("-d", "--dump", action="store_true", help="Save debug frames")
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logs"
     )
     args = parser.parse_args()
+
+    if not args.action:
+        print("Forza Horizon 6 automation CLI")
+        print()
+        print("Usage:")
+        print("  python cli.py <name|path.yaml> [-d] [-v]")
+        return
 
     action = args.action
     if action.endswith(".yaml") or action.endswith(".yml"):
