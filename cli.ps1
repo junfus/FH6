@@ -1166,7 +1166,7 @@ function Invoke-Detect([System.Collections.IDictionary]$screenMap, [string]$coun
                 exit 0
             }
             $script:_detectCount++
-            Log-Info "$($countTemplate)_count=$($script:_detectCount)"
+            Log-Info "****** $($countTemplate)_count=$($script:_detectCount) ******"
         }
         Log-Info "$(Format-TemplateDetails $matchDetails), $timing -> press $key"
         Press-Key $key

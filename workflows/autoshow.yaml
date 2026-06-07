@@ -1,4 +1,4 @@
-loop: 1
+loop: 33
 focus_mode: exit
 await_focus: true
 report_cycle_time: true
@@ -29,7 +29,8 @@ steps:
       template: color
   - press: enter
   - wait_on:
-      template: purchase
+      template:
+        any: [purchase, purchase_with_discount]
   - press: enter
   - wait_on:
       template: confirm_purchase

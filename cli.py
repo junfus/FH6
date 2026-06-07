@@ -1038,7 +1038,7 @@ def invoke_detect(screen_map, count_template, count_limit=None):
                 raise SystemExit(0)
 
             _detect_count += 1
-            log_info(f"{count_template}_count={_detect_count}")
+            log_info(f"****** {count_template}_count={_detect_count} ******")
 
         log_info(f"{format_template_details(match_details)}, {timing} -> press {key}")
         key_press(key)
