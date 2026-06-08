@@ -496,6 +496,7 @@ def wait_on_template(template_expr, timeout=None, on_miss_key=None):
         if r["matched"]:
             elapsed = time.time() - start
             log_info(f"{format_template_details(r['details'])}, took {elapsed:.1f}s")
+            wait_poll_tick()
             return
 
         wait_poll_tick()

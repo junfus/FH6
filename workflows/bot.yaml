@@ -6,7 +6,7 @@ hold:
   release_on_lose_focus: true
 steps:
   - detect:
-      count: 99
+      count: 100
       templates:
         start: enter
         result: x

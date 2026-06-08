@@ -6,7 +6,7 @@ Reads foo.png from this folder, scales to 720p, outputs t_foo.png, appends thres
 param(
     [Parameter(Mandatory)][int]$Height,
     [Parameter(Mandatory)][string]$File,
-    [double]$Threshold = 0.80
+    [double]$Threshold = 0.85
 )
 
 $ErrorActionPreference = 'Stop'

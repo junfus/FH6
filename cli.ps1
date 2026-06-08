@@ -558,12 +558,12 @@ function Wait-ForTemplate($templateExpr, [double]$timeout = $script:VERIFY_TIMEO
             Log-Info "$(Format-TemplateDetails $r.Details), took $([Math]::Round($el,1))s"
             $gray.Dispose()
             $frame.Dispose()
+            Wait-PollTick
             return
         }
 
         $gray.Dispose()
         $frame.Dispose()
-
         Wait-PollTick
 
         if ($onMiss) {

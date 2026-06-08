@@ -14,7 +14,7 @@ def main():
     )
     parser.add_argument("-h", "--height", type=int, required=True)
     parser.add_argument("-f", "--file", type=str, required=True)
-    parser.add_argument("-t", "--threshold", type=float, default=0.80)
+    parser.add_argument("-t", "--threshold", type=float, default=0.85)
     args = parser.parse_args()
 
     height = args.height
