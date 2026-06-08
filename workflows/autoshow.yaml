@@ -16,6 +16,7 @@ steps:
       key: right
       times: 3
   - press: enter
+  - wait: 0.5
   - wait_on:
       template: target
   - repeat:
