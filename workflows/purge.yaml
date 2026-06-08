@@ -4,11 +4,12 @@ await_focus: true
 steps:
   - wait_on:
       template: my_car_menu
+  - wait: 0.5
   - press: "y"
   - wait: 0.5
   - repeat:
       key: down
-      times: 2
+      times: 4
   - press: enter
   - press: escape
   # Find and purge
