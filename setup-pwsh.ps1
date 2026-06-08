@@ -1,5 +1,5 @@
 <#
-RUN: .\setup.ps1
+RUN: .\setup-pwsh.ps1
 Pulls OpenCvSharp + YamlDotNet DLLs from NuGet. Skips if already present.
 #>
 
@@ -78,10 +78,9 @@ if (-not (Test-Path (Join-Path $dir 'OpenCvSharp.dll')) -or -not (Test-Path (Joi
 
     $zip = [System.IO.Compression.ZipFile]::OpenRead($nativePkg)
     try {
-        $natives = $zip.Entries | Where-Object { $_.FullName -like 'runtimes/win-x64/native/*.dll' }
-        foreach ($e in $natives) {
-            Expand-DllEntry $zip $e.FullName $e.Name
-        }
+        # Only OpenCvSharpExtern is needed. The runtime package also ships
+        # opencv_videoio_ffmpeg (~28 MB) for video I/O, which this CLI never uses.
+        Expand-DllEntry $zip 'runtimes/win-x64/native/OpenCvSharpExtern.dll' 'OpenCvSharpExtern.dll'
     } finally {
         $zip.Dispose()
     }

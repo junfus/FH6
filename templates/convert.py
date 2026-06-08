@@ -1,4 +1,4 @@
-# RUN: python convert.py -Height 2160 -File foo
+# RUN: python convert.py --height 2160 --file foo
 # Reads foo.png from this folder, scales to 720p, outputs t_foo.png, appends threshold.
 import argparse
 import sys
@@ -67,7 +67,7 @@ def main():
     else:
         trimmed = content.rstrip()
         entry = f"{name}: {threshold:.2f}"
-        yaml_path.write_text(f"{trimmed}\n{entry}\n")
+        yaml_path.write_text(f"{trimmed}\n{entry}\n", newline="\n")
         print(f"Added '{entry}' to thresholds.yaml")
 
 

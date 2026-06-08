@@ -23,12 +23,14 @@ Both share config, templates, and workflow YAML files.
 # Python
 python cli.py bot
 python cli.py purge
+python cli.py autoshow
 python cli.py snap
 python cli.py bot -d -v
 
 # PowerShell
 .\cli.ps1 bot
 .\cli.ps1 purge
+.\cli.ps1 autoshow
 .\cli.ps1 snap
 .\cli.ps1 bot -Dump -Verbose
 ```
@@ -88,7 +90,7 @@ python cli.py C:\Users\me\my_custom.yaml
 
 `wait_on.template` accepts a single template name or an explicit boolean expression. `scroll_to`, `purge.template`, and `purge.marker` accept single template names only.
 
-`detect.count` counts matches of the first entry under `templates`. The counted match still presses its key; the script stops after that key press when the count reaches the limit.
+`detect.count` allows that many key presses for the first entry under `templates`; the next match for that entry stops before pressing its key.
 
 For template expressions, lists are only valid under `all` or `any`; bare `template: [a, b]` is intentionally invalid.
 

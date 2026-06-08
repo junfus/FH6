@@ -62,7 +62,7 @@ if (Test-Path $yamlPath) {
 }
 $entry = "$File`: $($Threshold.ToString('F2'))"
 
-if ($content -match "(?m)^$File`:") {
+if ($content -match "(?m)^$([regex]::Escape($File))`:") {
     Write-Host "Threshold for '$File' already exists in thresholds.yaml, skipping"
 } else {
     $trimmed = $content.TrimEnd()

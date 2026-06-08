@@ -1,7 +1,8 @@
-# SETUP: .\setup.ps1
+# SETUP: .\setup-python.ps1
 # RUN:
 #     python cli.py bot
 #     python cli.py purge
+#     python cli.py autoshow
 #     python cli.py snap
 #     python cli.py path\to\custom.yaml
 #     python cli.py bot -d -v
@@ -439,7 +440,7 @@ def eval_template_expr(gray, expr, debug=False, frame_w=0):
         r = match_template(gray, expr, frame_w)
         return {
             "matched": r["matched"],
-            "details": [{"name": expr, "score": r["score"], "matched": r["matched"]}],
+            "details": [template_detail(expr, r)],
         }
 
     keys = list(expr.keys())
@@ -463,6 +464,10 @@ def eval_template_expr(gray, expr, debug=False, frame_w=0):
     return {"matched": matched, "details": details}
 
 
+def template_detail(name, result):
+    return {"name": name, "score": result["score"], "matched": result["matched"]}
+
+
 def format_template_details(details):
     return ", ".join(
         f"{d['name']}:{'hit' if d['matched'] else 'miss'}({d['score']:.3f})"
@@ -474,39 +479,6 @@ def template_tag(label):
     tag = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in label)
     tag = tag.strip("_")
     return tag[:80] if tag else "match"
-
-
-def wait_on_template(template_expr, timeout=None, on_miss_key=None):
-    if timeout is None:
-        timeout = VERIFY_TIMEOUT
-
-    label = format_template_expr(template_expr)
-    start = time.time()
-
-    while (time.time() - start) < timeout:
-        frame = capture_frame(wait=0)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        debug = is_debug_enabled()
-        r = eval_template_expr(gray, template_expr, debug=debug)
-        if debug:
-            log_debug(
-                f"polling {label}: {format_template_details(r['details'])} matched={r['matched']}"
-            )
-
-        if r["matched"]:
-            elapsed = time.time() - start
-            log_info(f"{format_template_details(r['details'])}, took {elapsed:.1f}s")
-            wait_poll_tick()
-            return
-
-        wait_poll_tick()
-        if on_miss_key:
-            key_press(on_miss_key)
-
-    frame = capture_frame(wait=0)
-    dump_diagnostics(frame, f"{template_tag(label)}_timeout")
-    log_error(f"Did not detect {label} within {int(timeout)}s; stopping")
-    raise SystemExit(1)
 
 
 # =============================================================================
@@ -888,13 +860,7 @@ def _purge_candidate(cells, frame_w, template, marker, brand_new_filter, focused
                         "n/a"
                         if marker_result is None
                         else format_template_details(
-                            [
-                                {
-                                    "name": marker,
-                                    "score": marker_result["score"],
-                                    "matched": marker_result["matched"],
-                                }
-                            ]
+                            [template_detail(marker, marker_result)]
                         )
                     )
                     log_debug(
@@ -918,131 +884,6 @@ def _purge_candidate(cells, frame_w, template, marker, brand_new_filter, focused
         "candidate": candidate,
         "focused_is_candidate": focused_is_candidate,
     }
-
-
-def purge(template, marker=None, brand_new_filter=None):
-    deletions = 0
-    iter_idx = 0
-    log_info(
-        f"purge template={template} marker={describe_marker(marker)} brand_new={describe_brand_new(brand_new_filter)}"
-    )
-
-    while True:
-        result = scroll_right_to(template)
-        if result is None:
-            log_info(f"No more matches; done ({deletions} deletions)")
-            return
-
-        frame = result["frame"] if result["frame"] is not None else capture_frame()
-        slices = slice_grid(frame)
-        if dump_is_enabled():
-            dump_save_cells(slices["cells"], f"iter{iter_idx}")
-
-        frame_w = slices["frame"].shape[1]
-        scan = _purge_candidate(
-            slices["cells"],
-            frame_w,
-            template,
-            marker,
-            brand_new_filter,
-            slices["focused"],
-        )
-
-        if scan["candidate"] is None:
-            if is_edge_empty(
-                cv2.cvtColor(slices["frame"], cv2.COLOR_BGR2GRAY), "right"
-            ):
-                log_info(f"Last page, no more candidates; done ({deletions} deletions)")
-                return
-
-            log_info("no candidate this view; right 4")
-            key_repeat("right", 4)
-            continue
-
-        t = scan["candidate"]
-        if scan["focused_is_candidate"]:
-            log_info(f"focused candidate at c{t[0]}r{t[1]}")
-        else:
-            log_info(f"candidate at c{t[0]}r{t[1]}")
-            move_cursor(slices["focused"], t)
-        key_press("enter")
-        wait_for_refresh()
-        key_repeat("down", 4)
-        key_press("enter")
-        wait_for_refresh()
-        key_press("down")
-        key_press("enter")
-        deletions += 1
-        log_info(f"deleted ({deletions})")
-        iter_idx += 1
-
-
-# =============================================================================
-# Snap
-# =============================================================================
-def invoke_snap():
-    dump_ensure_dir()
-    frame = capture_frame(wait=0)
-    d = dump_get_dir()
-    cv2.imwrite(str(d / "frame.png"), frame)
-    g = get_grid_cells(frame)
-
-    for col in range(4):
-        for row in range(3):
-            cell = g["cells"][col][row]
-            cv2.imwrite(str(d / f"c{col}r{row}_slot.png"), cell["bgr"])
-            cv2.imwrite(str(d / f"c{col}r{row}_brand_new.png"), cell["yellow_bgr"])
-
-    log_info(f"wrote frame + 24 slot crops to {d}")
-
-
-# =============================================================================
-# Detect
-# =============================================================================
-_last_detect_match_time = None
-_detect_count = 0
-
-
-def invoke_detect(screen_map, count_template, count_limit=None):
-    global _last_detect_match_time, _detect_count
-
-    try:
-        frame = capture_frame(wait=POLL_INTERVAL)
-    except Exception as e:
-        log_error(f"{e} -- pausing 1s and retrying")
-        time.sleep(1)
-        return
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    matched = None
-    match_details = None
-    for n in screen_map:
-        r = match_template(gray, n)
-        if r["matched"]:
-            matched = n
-            match_details = [{"name": n, "score": r["score"], "matched": True}]
-            break
-
-    if matched:
-        now = time.time()
-        if _last_detect_match_time is None:
-            timing = "first match"
-        else:
-            timing = f"since last {now - _last_detect_match_time:.1f}s"
-        _last_detect_match_time = now
-
-        key = screen_map[matched]
-        if matched == count_template:
-            if count_limit is not None and _detect_count >= count_limit:
-                log_info(f"total {count_limit} reached; stopping")
-                raise SystemExit(0)
-
-            _detect_count += 1
-            log_info(f"****** {count_template}_count={_detect_count} ******")
-
-        log_info(f"{format_template_details(match_details)}, {timing} -> press {key}")
-        key_press(key)
 
 
 # =============================================================================
@@ -1156,50 +997,6 @@ def read_brand_new(action, value):
     raise SystemExit(1)
 
 
-def read_detect(action, value):
-    if not isinstance(value, dict) or not value:
-        log_error("detect requires templates")
-        raise SystemExit(1)
-
-    count_limit = None
-    if "templates" not in value:
-        log_error("detect requires templates")
-        raise SystemExit(1)
-
-    unexpected = set(value) - {"count", "templates"}
-    if unexpected:
-        log_error("detect only accepts count and templates")
-        raise SystemExit(1)
-
-    if "count" in value:
-        if isinstance(value["count"], bool):
-            log_error("detect count must be an integer")
-            raise SystemExit(1)
-
-        try:
-            count_limit = int(value["count"])
-        except (TypeError, ValueError):
-            log_error("detect count must be an integer")
-            raise SystemExit(1)
-
-        if count_limit <= 0:
-            log_error("detect count must be > 0")
-            raise SystemExit(1)
-
-    templates = value["templates"]
-
-    if not isinstance(templates, dict) or not templates:
-        log_error("detect templates requires one or more template-to-key mappings")
-        raise SystemExit(1)
-
-    for template, key in templates.items():
-        if template is None or str(template) == "" or key is None or str(key) == "":
-            log_error("detect mappings must be template: key")
-            raise SystemExit(1)
-
-    return {str(k): str(v) for k, v in templates.items()}, count_limit
-
-
 def validate_number(action, value, field="value", integer=False, allow_empty=False):
     if value is None or str(value) == "":
         if allow_empty:
@@ -1219,74 +1016,336 @@ def validate_number(action, value, field="value", integer=False, allow_empty=Fal
         raise SystemExit(1)
 
 
-def read_repeat(action, value):
+# =============================================================================
+# Action handlers
+#
+# One unit per action: parse(value, index) -> args (raises on invalid), and
+# run(args) executes the parsed step. Register the pair in ACTIONS below.
+# =============================================================================
+def parse_press(value, index):
+    if value is None or str(value) == "":
+        log_error(f"step {index} press requires a key")
+        raise SystemExit(1)
+    return {"key": str(value)}
+
+
+def run_press(args):
+    key_press(args["key"])
+
+
+def parse_repeat(value, index):
     if not isinstance(value, dict):
-        log_error(f"{action} requires key and times")
+        log_error("repeat requires key and times")
         raise SystemExit(1)
-
     if "key" not in value or value["key"] is None or str(value["key"]) == "":
-        log_error(f"{action} requires key")
+        log_error("repeat requires key")
         raise SystemExit(1)
-
     if "times" not in value or value["times"] is None:
-        log_error(f"{action} requires times")
+        log_error("repeat requires times")
         raise SystemExit(1)
-
     try:
         times = int(value["times"])
     except (TypeError, ValueError):
-        log_error(f"{action} times must be an integer")
+        log_error("repeat times must be an integer")
         raise SystemExit(1)
-
     if times < 0:
-        log_error(f"{action} times must be >= 0")
+        log_error("repeat times must be >= 0")
         raise SystemExit(1)
+    return {"key": str(value["key"]), "times": times}
 
-    return str(value["key"]), times
+
+def run_repeat(args):
+    key_repeat(args["key"], args["times"])
 
 
-def validate_step(step, index):
+def parse_wait(value, index):
+    validate_number("wait", value, allow_empty=True)
+    seconds = None if value is None or str(value) == "" else float(value)
+    return {"seconds": seconds}
+
+
+def run_wait(args):
+    if args["seconds"] is None:
+        wait_for_refresh()
+    else:
+        wait_for_refresh(args["seconds"])
+
+
+def parse_countdown(value, index):
+    validate_number("countdown", value, integer=True, allow_empty=True)
+    seconds = None if value is None or str(value) == "" else int(value)
+    return {"seconds": seconds}
+
+
+def run_countdown(args):
+    seconds = args["seconds"]
+    wait_countdown(3 if seconds is None else seconds, "Waiting")
+
+
+def parse_wait_on(value, index):
+    template_expr = read_template_expr("wait_on", value)
+    if "timeout" in value and value["timeout"] is not None:
+        validate_number("wait_on", value["timeout"], field="timeout")
+    if "on_miss" in value and (value["on_miss"] is None or str(value["on_miss"]) == ""):
+        log_error("wait_on on_miss must be a key")
+        raise SystemExit(1)
+    timeout = float(value["timeout"]) if value.get("timeout") else None
+    on_miss = str(value["on_miss"]) if value.get("on_miss") else None
+    return {"template": template_expr, "timeout": timeout, "on_miss": on_miss}
+
+
+def run_wait_on(args):
+    template_expr = args["template"]
+    timeout = args["timeout"]
+    if timeout is None:
+        timeout = VERIFY_TIMEOUT
+    on_miss_key = args["on_miss"]
+
+    label = format_template_expr(template_expr)
+    start = time.time()
+
+    while (time.time() - start) < timeout:
+        frame = capture_frame(wait=0)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        debug = is_debug_enabled()
+        r = eval_template_expr(gray, template_expr, debug=debug)
+        if debug:
+            log_debug(
+                f"polling {label}: {format_template_details(r['details'])} matched={r['matched']}"
+            )
+
+        if r["matched"]:
+            elapsed = time.time() - start
+            log_info(f"{format_template_details(r['details'])}, took {elapsed:.1f}s")
+            wait_poll_tick()
+            return
+
+        wait_poll_tick()
+        if on_miss_key:
+            key_press(on_miss_key)
+
+    frame = capture_frame(wait=0)
+    dump_diagnostics(frame, f"{template_tag(label)}_timeout")
+    log_error(f"Did not detect {label} within {int(timeout)}s; stopping")
+    raise SystemExit(1)
+
+
+def parse_scroll_to(value, index):
+    return {"template": read_template("scroll_to", value)}
+
+
+def run_scroll_to(args):
+    if scroll_to(args["template"]) is None:
+        log_info("No matches found; stopping")
+        sys.exit(0)
+
+
+def parse_purge(value, index):
+    return {
+        "template": read_mapping_template("purge", value),
+        "marker": read_marker("purge", value),
+        "brand_new": read_brand_new("purge", value),
+    }
+
+
+def run_purge(args):
+    template = args["template"]
+    marker = args["marker"]
+    brand_new_filter = args["brand_new"]
+    deletions = 0
+    iter_idx = 0
+    log_info(
+        f"purge template={template} marker={describe_marker(marker)} brand_new={describe_brand_new(brand_new_filter)}"
+    )
+
+    while True:
+        result = scroll_right_to(template)
+        if result is None:
+            log_info(f"No more matches; done ({deletions} deletions)")
+            return
+
+        frame = result["frame"] if result["frame"] is not None else capture_frame()
+        slices = slice_grid(frame)
+        if dump_is_enabled():
+            dump_save_cells(slices["cells"], f"iter{iter_idx}")
+
+        frame_w = slices["frame"].shape[1]
+        scan = _purge_candidate(
+            slices["cells"],
+            frame_w,
+            template,
+            marker,
+            brand_new_filter,
+            slices["focused"],
+        )
+
+        if scan["candidate"] is None:
+            if is_edge_empty(
+                cv2.cvtColor(slices["frame"], cv2.COLOR_BGR2GRAY), "right"
+            ):
+                log_info(f"Last page, no more candidates; done ({deletions} deletions)")
+                return
+
+            log_info("no candidate this view; right 4")
+            key_repeat("right", 4)
+            continue
+
+        t = scan["candidate"]
+        if scan["focused_is_candidate"]:
+            log_info(f"focused candidate at c{t[0]}r{t[1]}")
+        else:
+            log_info(f"candidate at c{t[0]}r{t[1]}")
+            move_cursor(slices["focused"], t)
+        key_press("enter")
+        wait_for_refresh()
+        key_repeat("down", 4)
+        key_press("enter")
+        wait_for_refresh()
+        key_press("down")
+        key_press("enter")
+        deletions += 1
+        log_info(f"deleted ({deletions})")
+        iter_idx += 1
+
+
+def parse_snap(value, index):
+    if value not in (None, ""):
+        log_error("snap does not accept arguments")
+        raise SystemExit(1)
+    return {}
+
+
+def run_snap(args):
+    dump_ensure_dir()
+    frame = capture_frame(wait=0)
+    d = dump_get_dir()
+    cv2.imwrite(str(d / "frame.png"), frame)
+    g = get_grid_cells(frame)
+
+    for col in range(4):
+        for row in range(3):
+            cell = g["cells"][col][row]
+            cv2.imwrite(str(d / f"c{col}r{row}_slot.png"), cell["bgr"])
+            cv2.imwrite(str(d / f"c{col}r{row}_brand_new.png"), cell["yellow_bgr"])
+
+    log_info(f"wrote frame + 24 slot crops to {d}")
+
+
+_last_detect_match_time = None
+_detect_count = 0
+
+
+def parse_detect(value, index):
+    if not isinstance(value, dict) or not value:
+        log_error("detect requires templates")
+        raise SystemExit(1)
+    if "templates" not in value:
+        log_error("detect requires templates")
+        raise SystemExit(1)
+    unexpected = set(value) - {"count", "templates"}
+    if unexpected:
+        log_error("detect only accepts count and templates")
+        raise SystemExit(1)
+    count_limit = None
+    if "count" in value:
+        if isinstance(value["count"], bool):
+            log_error("detect count must be an integer")
+            raise SystemExit(1)
+        try:
+            count_limit = int(value["count"])
+        except (TypeError, ValueError):
+            log_error("detect count must be an integer")
+            raise SystemExit(1)
+        if count_limit <= 0:
+            log_error("detect count must be > 0")
+            raise SystemExit(1)
+    templates = value["templates"]
+    if not isinstance(templates, dict) or not templates:
+        log_error("detect templates requires one or more template-to-key mappings")
+        raise SystemExit(1)
+    for template, key in templates.items():
+        if template is None or str(template) == "" or key is None or str(key) == "":
+            log_error("detect mappings must be template: key")
+            raise SystemExit(1)
+    screen_map = {str(k): str(v) for k, v in templates.items()}
+    return {
+        "screen_map": screen_map,
+        "count_template": next(iter(screen_map)),
+        "count_limit": count_limit,
+    }
+
+
+def run_detect(args):
+    global _last_detect_match_time, _detect_count
+    screen_map = args["screen_map"]
+    count_template = args["count_template"]
+    count_limit = args["count_limit"]
+
+    try:
+        frame = capture_frame(wait=POLL_INTERVAL)
+    except Exception as e:
+        log_error(f"{e} -- pausing 1s and retrying")
+        time.sleep(1)
+        return
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    matched = None
+    match_details = None
+    for n in screen_map:
+        r = match_template(gray, n)
+        if r["matched"]:
+            matched = n
+            match_details = [template_detail(n, r)]
+            break
+
+    if matched:
+        now = time.time()
+        if _last_detect_match_time is None:
+            timing = "first match"
+        else:
+            timing = f"since last {now - _last_detect_match_time:.1f}s"
+        _last_detect_match_time = now
+
+        key = screen_map[matched]
+        if matched == count_template:
+            if count_limit is not None and _detect_count >= count_limit:
+                log_info(f"total {count_limit} reached; stopping")
+                raise SystemExit(0)
+
+            _detect_count += 1
+            log_info(f"****** {count_template}_count={_detect_count} ******")
+
+        log_info(f"{format_template_details(match_details)}, {timing} -> press {key}")
+        key_press(key)
+
+
+# Action registry: name -> (parse, run). Add a new action with one entry here.
+ACTIONS = {
+    "press": (parse_press, run_press),
+    "repeat": (parse_repeat, run_repeat),
+    "wait": (parse_wait, run_wait),
+    "countdown": (parse_countdown, run_countdown),
+    "wait_on": (parse_wait_on, run_wait_on),
+    "scroll_to": (parse_scroll_to, run_scroll_to),
+    "purge": (parse_purge, run_purge),
+    "snap": (parse_snap, run_snap),
+    "detect": (parse_detect, run_detect),
+}
+
+
+def compile_step(step, index):
     if not isinstance(step, dict) or len(step) != 1:
         log_error(f"step {index} must be a single action mapping")
         raise SystemExit(1)
 
-    action = list(step.keys())[0]
-    value = step[action]
-
-    if action == "press":
-        if value is None or str(value) == "":
-            log_error(f"step {index} press requires a key")
-            raise SystemExit(1)
-    elif action == "repeat":
-        read_repeat(action, value)
-    elif action == "wait":
-        validate_number(action, value, allow_empty=True)
-    elif action == "countdown":
-        validate_number(action, value, integer=True, allow_empty=True)
-    elif action == "wait_on":
-        read_template_expr(action, value)
-        if "timeout" in value and value["timeout"] is not None:
-            validate_number(action, value["timeout"], field="timeout")
-        if "on_miss" in value and (
-            value["on_miss"] is None or str(value["on_miss"]) == ""
-        ):
-            log_error("wait_on on_miss must be a key")
-            raise SystemExit(1)
-    elif action == "scroll_to":
-        read_template(action, value)
-    elif action == "purge":
-        read_mapping_template(action, value)
-        read_marker(action, value)
-        read_brand_new(action, value)
-    elif action == "snap":
-        if value not in (None, ""):
-            log_error("snap does not accept arguments")
-            raise SystemExit(1)
-    elif action == "detect":
-        read_detect(action, value)
-    else:
-        log_error(f"Unknown action: {action}")
+    name = list(step.keys())[0]
+    if name not in ACTIONS:
+        log_error(f"Unknown action: {name}")
         raise SystemExit(1)
+
+    parse, _ = ACTIONS[name]
+    return {"name": name, "args": parse(step[name], index)}
 
 
 def validate_workflow(workflow):
@@ -1333,75 +1392,30 @@ def validate_workflow(workflow):
             log_error("workflow hold release_on_lose_focus must be true or false")
             raise SystemExit(1)
 
-    for index, step in enumerate(workflow["steps"], start=1):
-        validate_step(step, index)
+    compiled = [
+        compile_step(step, index)
+        for index, step in enumerate(workflow["steps"], start=1)
+    ]
 
     log_info("Validated workflow")
+    return compiled
 
 
 # =============================================================================
 # Step runner
 # =============================================================================
-def run_step(step):
-    name = list(step.keys())[0]
-    value = step[name]
+def run_step(compiled):
+    name = compiled["name"]
     log_set_step(name)
-
-    if name == "press":
-        key_press(str(value))
-
-    elif name == "repeat":
-        key_repeat(str(value["key"]), int(value["times"]))
-
-    elif name == "wait":
-        if value is None or str(value) == "":
-            wait_for_refresh()
-        else:
-            wait_for_refresh(float(value))
-
-    elif name == "countdown":
-        if value is None or str(value) == "":
-            wait_countdown(3, "Waiting")
-        else:
-            wait_countdown(int(value), "Waiting")
-
-    elif name == "wait_on":
-        template_expr = value["template"]
-        tout = float(value["timeout"]) if value.get("timeout") else VERIFY_TIMEOUT
-        on_miss = value.get("on_miss")
-        if on_miss:
-            wait_on_template(template_expr, timeout=tout, on_miss_key=str(on_miss))
-        else:
-            wait_on_template(template_expr, timeout=tout)
-
-    elif name == "scroll_to":
-        result = scroll_to(str(value))
-        if result is None:
-            log_info("No matches found; stopping")
-            sys.exit(0)
-
-    elif name == "purge":
-        purge(
-            str(value["template"]),
-            read_marker(name, value),
-            read_brand_new(name, value),
-        )
-
-    elif name == "snap":
-        invoke_snap()
-
-    elif name == "detect":
-        screen_map, count_limit = read_detect(name, value)
-        count_template = next(iter(screen_map))
-        invoke_detect(screen_map, count_template, count_limit)
-
+    _, run = ACTIONS[name]
+    run(compiled["args"])
     log_set_step(None)
 
 
 # =============================================================================
 # Workflow runner
 # =============================================================================
-def run_workflow(workflow):
+def run_workflow(workflow, steps):
     loop_val = workflow.get("loop", False)
 
     if loop_val is True:
@@ -1434,7 +1448,6 @@ def run_workflow(workflow):
     else:
         report_cycle_time = False
 
-    steps = workflow["steps"]
     cycle = 0
 
     try:
@@ -1527,7 +1540,7 @@ def main():
         log_file = None
 
     log_setup(verbose=args.verbose, log_file=log_file)
-    validate_workflow(workflow)
+    compiled = validate_workflow(workflow)
 
     log_info("=== workflow starting ===")
 
@@ -1552,7 +1565,7 @@ def main():
     h, w = frame.shape[:2]
     log_info(f"Captured frame {w}x{h}")
 
-    run_workflow(workflow)
+    run_workflow(workflow, compiled)
 
 
 if __name__ == "__main__":

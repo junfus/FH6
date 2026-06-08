@@ -1,5 +1,5 @@
 <#
-RUN: .\setup.ps1
+RUN: .\setup-python.ps1
 Finds Python 3, installs if needed, then installs pip dependencies.
 #>
 
@@ -62,7 +62,6 @@ $deps = @(
     'opencv-python'
     'numpy'
     'mss'
-    'pygetwindow'
     'pydirectinput-rgx'
     'pyyaml'
 )
@@ -73,7 +72,7 @@ Write-Host 'Installing dependencies...'
 
 Write-Host 'Verifying imports...'
 $check = & $pyPath -c "
-import cv2, numpy, mss, pygetwindow, pydirectinput, yaml
+import cv2, numpy, mss, pydirectinput, yaml
 print('All imports OK')
 " 2>&1
 
